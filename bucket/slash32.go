@@ -7,27 +7,34 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 )
 
 type Slash32 struct {
-	hash              map[string]entry
+	rate              float64
+	hash              map[string]entrySlash32
 	hashMutex         sync.Mutex
 	trustedProxiesMap map[string]bool
+	netmask           int
 }
 
-func NewSlash32(trustedProxiesMap map[string]bool) *Slash32 {
-	return &Slash32{
-		hash:              make(map[string]entry),
+func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *Slash32 {
+	b := &Slash32{
+		rate:              rate,
+		hash:              make(map[string]entrySlash32),
 		hashMutex:         sync.Mutex{},
 		trustedProxiesMap: trustedProxiesMap,
+		netmask:           netmask,
 	}
+	go b.ticker()
+	return b
 }
 
-type entry struct {
-	remoteIp string
-	credit   float64
+type entrySlash32 struct {
+	netmask string
+	credit  float64
 }
 
 func (b *Slash32) Register(r *http.Request, cost float64) {
@@ -43,8 +50,15 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 		}
 	}
 
+	ipnet := "0.0.0.0/0"
+	var network *net.IPNet
+	_, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", ip, b.netmask))
+	if err == nil {
+		ipnet = network.String()
+	}
+
 	hash := md5.New()
-	io.WriteString(hash, ip)
+	io.WriteString(hash, ipnet)
 	key := fmt.Sprintf("%x", hash.Sum(nil))
 
 	b.hashMutex.Lock()
@@ -52,19 +66,32 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 		c.credit -= cost
 		b.hash[key] = c
 	} else {
-		b.hash[key] = entry{
-			remoteIp: ip,
-			credit:   -cost,
+		b.hash[key] = entrySlash32{
+			netmask: ipnet,
+			credit:  b.rate*10.0 - cost,
 		}
 	}
 	b.hashMutex.Unlock()
+
+	log.Info(fmt.Sprintf("Slash32(%d): %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].credit))
 }
 
 func (b *Slash32) Dump(l *log.Logger) {
 	for k, c := range b.hash {
-		l.Info(fmt.Sprintf("%s,%s,%.3f", k, c.remoteIp, c.credit))
+		l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
 	}
-	b.hashMutex.Lock()
-	b.hash = make(map[string]entry)
-	b.hashMutex.Unlock()
+}
+
+func (b *Slash32) ticker() {
+	ticker := time.NewTicker(time.Second)
+	for range ticker.C {
+		for k, c := range b.hash {
+			if c.credit+b.rate > b.rate*10.0 {
+				c.credit = b.rate * 10.0
+			} else {
+				c.credit += b.rate
+			}
+			b.hash[k] = c
+		}
+	}
 }

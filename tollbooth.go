@@ -32,19 +32,19 @@ type config struct {
 var conf *config
 
 var slash32 *bucket.Slash32
+var slash24 *bucket.Slash32
+var slash16 *bucket.Slash32
+var userAgent *bucket.UserAgent
 var statsLog *log.Logger
+var cpuCount float64
 
 func utilisation() (float64, error) {
 	load, err := load.Avg()
 	if err != nil {
 		return -1, err
 	}
-	count, err := cpu.Counts(true)
-	if err != nil {
-		return -1, err
-	}
 
-	return load.Load1 / float64(count), nil
+	return load.Load1 / cpuCount, nil
 }
 
 func init() {
@@ -113,7 +113,17 @@ func init() {
 		statsLog.Level = log.DebugLevel
 	}
 
-	slash32 = bucket.NewSlash32(conf.trustedProxiesMap)
+	cpuCountInt, err := cpu.Counts(true)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
+	}
+	cpuCount = float64(cpuCountInt)
+
+	slash32 = bucket.NewSlash32(cpuCount*0.1, conf.trustedProxiesMap, 32)
+	slash24 = bucket.NewSlash32(cpuCount*0.25, conf.trustedProxiesMap, 24)
+	slash16 = bucket.NewSlash32(cpuCount*0.5, conf.trustedProxiesMap, 16)
+	userAgent = bucket.NewUserAgent(cpuCount * 0.1)
 }
 
 func middleware(h http.Handler) http.Handler {
@@ -134,9 +144,11 @@ func middleware(h http.Handler) http.Handler {
 		if u > 1.0 {
 			cost = cost / u
 		}
-		log.Info(fmt.Sprintf("Handled %s for %f", r.URL, cost))
 
 		slash32.Register(r, cost)
+		slash24.Register(r, cost)
+		slash16.Register(r, cost)
+		userAgent.Register(r, cost)
 	})
 }
 
@@ -144,6 +156,10 @@ func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
 		slash32.Dump(statsLog)
+		slash24.Dump(statsLog)
+		slash16.Dump(statsLog)
+		userAgent.Dump(statsLog)
+
 	}
 }
 
