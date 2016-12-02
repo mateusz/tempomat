@@ -1,22 +1,19 @@
 package main
 
 import (
-	"crypto/md5"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mateusz/tollbooth/bucket"
 	"github.com/rifflock/lfshook"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/load"
@@ -34,14 +31,7 @@ type config struct {
 
 var conf *config
 
-type Client struct {
-	RemoteIp string
-	Credit   float64
-}
-
-var clientHash map[string]Client
-var clientHashMutex sync.Mutex
-
+var slash32 *bucket.Slash32
 var statsLog *log.Logger
 
 func utilisation() (float64, error) {
@@ -123,48 +113,11 @@ func init() {
 		statsLog.Level = log.DebugLevel
 	}
 
-	clientHash = make(map[string]Client)
-	clientHashMutex = sync.Mutex{}
-}
-
-func getIPAdressFromHeaders(r *http.Request) string {
-	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip"} {
-		header := r.Header.Get(h)
-		if header == "" {
-			continue
-		}
-
-		addresses := strings.Split(header, ",")
-		ip := ""
-		for i := len(addresses) - 1; i >= 0; i-- {
-			ip = strings.TrimSpace(addresses[i])
-			if _, ok := conf.trustedProxiesMap[ip]; !ok {
-				break
-			}
-		}
-		return ip
-	}
-	return ""
+	slash32 = bucket.NewSlash32(conf.trustedProxiesMap)
 }
 
 func middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		ip := "0.0.0.0"
-		ip, _, err = net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			if _, ok := conf.trustedProxiesMap[ip]; ok {
-				headerIp := getIPAdressFromHeaders(r)
-				if headerIp != "" {
-					ip = headerIp
-				}
-			}
-		}
-
-		hash := md5.New()
-		io.WriteString(hash, ip)
-		key := fmt.Sprintf("%x", hash.Sum(nil))
-
 		start := time.Now()
 		h.ServeHTTP(w, r)
 		reqTime := time.Since(start)
@@ -181,31 +134,16 @@ func middleware(h http.Handler) http.Handler {
 		if u > 1.0 {
 			cost = cost / u
 		}
-		log.Info(fmt.Sprintf("%s billed %f for %s", ip, cost, r.URL))
+		log.Info(fmt.Sprintf("Handled %s for %f", r.URL, cost))
 
-		clientHashMutex.Lock()
-		if c, ok := clientHash[key]; ok {
-			c.Credit -= cost
-			clientHash[key] = c
-		} else {
-			clientHash[key] = Client{
-				RemoteIp: ip,
-				Credit:   -cost,
-			}
-		}
-		clientHashMutex.Unlock()
+		slash32.Register(r, cost)
 	})
 }
 
 func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
-		for k, c := range clientHash {
-			statsLog.Info(fmt.Sprintf("%s,%s,%.3f", k, c.RemoteIp, c.Credit))
-		}
-		clientHashMutex.Lock()
-		clientHash = make(map[string]Client)
-		clientHashMutex.Unlock()
+		slash32.Dump(statsLog)
 	}
 }
 
