@@ -13,7 +13,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/mateusz/tollbooth/bucket"
+	"github.com/mateusz/tempomat/bucket"
 	"github.com/rifflock/lfshook"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/load"
