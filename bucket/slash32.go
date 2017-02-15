@@ -78,7 +78,9 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 
 func (b *Slash32) Dump(l *log.Logger) {
 	for k, c := range b.hash {
-		l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
+		if c.credit < (b.rate * 10.0 * 0.1) {
+			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
+		}
 	}
 }
 
