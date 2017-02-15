@@ -1,14 +1,16 @@
 package main
 
 import (
-	"flag"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -20,16 +22,21 @@ import (
 )
 
 type config struct {
-	debug             bool
-	backend           string
-	listenPort        int
-	logFile           string
-	statsFile         string
-	trustedProxies    string
-	trustedProxiesMap map[string]bool
+	Debug                   bool    `json:"debug"`
+	StatsLowCreditThreshold float64 `json:"statsLowCreditThreshold"`
+	Backend                 string  `json:"backend"`
+	ListenPort              int     `json:"listenPort"`
+	LogFile                 string  `json:"logFile"`
+	StatsFile               string  `json:"statsFile"`
+	TrustedProxies          string  `json:"trustedProxies"`
+	Slash32Share            float64 `json:"slash32Share"`
+	Slash24Share            float64 `json:"slash24Share"`
+	Slash16Share            float64 `json:"slash16Share"`
+	UserAgentShare          float64 `json:"userAgentShare"`
+	trustedProxiesMap       map[string]bool
 }
 
-var conf *config
+var conf config
 
 var slash32 *bucket.Slash32
 var slash24 *bucket.Slash32
@@ -47,42 +54,66 @@ func utilisation() (float64, error) {
 	return load.Load1 / cpuCount, nil
 }
 
+func printConfig() {
+
+}
+
 func init() {
+
 	log.SetOutput(os.Stderr)
 	log.SetLevel(log.WarnLevel)
 
 	const (
-		debugHelp          = "Enable debug output"
-		backendHelp        = "Backend URI"
-		listenPortHelp     = "Local HTTP listen port"
-		logFileHelp        = "Log file"
-		statsFileHelp      = "Stats file"
-		trustedProxiesHelp = "Trusted proxy ips"
+		debugHelp               = "Debug mode"
+		statsLowCreditThreshold = "Statistics low credit threshold"
+		backendHelp             = "Backend URI"
+		listenPortHelp          = "Local HTTP listen port"
+		logFileHelp             = "Log file"
+		statsFileHelp           = "Stats file"
+		trustedProxiesHelp      = "Trusted proxy ips"
+		slash32ShareHelp        = "Slash32 max CPU share"
+		slash24ShareHelp        = "Slash24 max CPU share"
+		slash16ShareHelp        = "Slash16 max CPU share"
+		userAgentShareHelp      = "UserAgent max CPU share"
 	)
-	conf = &config{
-		trustedProxiesMap: make(map[string]bool),
+	conf = config{
+		Debug: false,
+		StatsLowCreditThreshold: 0.1,
+		Backend:                 "http://localhost:80",
+		ListenPort:              8888,
+		LogFile:                 "",
+		StatsFile:               "",
+		TrustedProxies:          "",
+		Slash32Share:            0.1,
+		Slash24Share:            0.25,
+		Slash16Share:            0.5,
+		UserAgentShare:          0.1,
+		trustedProxiesMap:       make(map[string]bool),
 	}
-	flag.BoolVar(&conf.debug, "debug", false, debugHelp)
-	flag.StringVar(&conf.backend, "backend", "http://localhost:80", backendHelp)
-	flag.IntVar(&conf.listenPort, "listen-port", 8888, listenPortHelp)
-	flag.StringVar(&conf.logFile, "log-file", "", logFileHelp)
-	flag.StringVar(&conf.statsFile, "stats-file", "", statsFileHelp)
-	flag.StringVar(&conf.trustedProxies, "trusted-proxies", "", trustedProxiesHelp)
-	flag.Parse()
 
-	proxies := strings.Split(conf.trustedProxies, ",")
+	jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
+	if err != nil {
+		log.Error(err)
+		log.Fatal("Refusing to start on unreadable config file.")
+	}
+	if err = json.Unmarshal(jsonStr, &conf); err != nil {
+		log.Error(err)
+		log.Fatal("Refusing to start on unparseable config file.")
+	}
+
+	proxies := strings.Split(conf.TrustedProxies, ",")
 	for _, proxy := range proxies {
 		conf.trustedProxiesMap[proxy] = true
 	}
 
-	if conf.logFile != "" {
+	if conf.LogFile != "" {
 		log.AddHook(lfshook.NewHook(lfshook.PathMap{
-			log.PanicLevel: conf.logFile,
-			log.FatalLevel: conf.logFile,
-			log.ErrorLevel: conf.logFile,
-			log.WarnLevel:  conf.logFile,
-			log.InfoLevel:  conf.logFile,
-			log.DebugLevel: conf.logFile,
+			log.PanicLevel: conf.LogFile,
+			log.FatalLevel: conf.LogFile,
+			log.ErrorLevel: conf.LogFile,
+			log.WarnLevel:  conf.LogFile,
+			log.InfoLevel:  conf.LogFile,
+			log.DebugLevel: conf.LogFile,
 		}))
 	}
 
@@ -90,40 +121,44 @@ func init() {
 	statsLog.Out = ioutil.Discard
 	statsLog.Level = log.InfoLevel
 	statsLog.Formatter = &StatsFormatter{}
-	if conf.statsFile != "" {
+	if conf.StatsFile != "" {
 		var err error
-		statsLog.Out, err = os.OpenFile(conf.statsFile, os.O_RDWR|os.O_CREATE, 0666)
+		statsLog.Out, err = os.OpenFile(conf.StatsFile, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
 			log.Fatal(err)
-			os.Exit(1)
 		}
 	}
 
-	if conf.debug {
-		tw := tabwriter.NewWriter(os.Stdout, 24, 4, 1, ' ', tabwriter.AlignRight)
-		fmt.Fprintf(tw, "Value\t   Option\f")
-		fmt.Fprintf(tw, "%t\t - %s\f", conf.debug, debugHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.backend, backendHelp)
-		fmt.Fprintf(tw, "%d\t - %s\f", conf.listenPort, listenPortHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.logFile, logFileHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.statsFile, statsFileHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.trustedProxies, trustedProxiesHelp)
-
+	if conf.Debug {
 		log.SetLevel(log.DebugLevel)
 		statsLog.Level = log.DebugLevel
+
+		tw := tabwriter.NewWriter(os.Stdout, 24, 4, 1, ' ', tabwriter.AlignRight)
+		fmt.Fprintf(tw, "Value\t   Option\f")
+		fmt.Fprintf(tw, "%t\t - %s\f", conf.Debug, debugHelp)
+		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.StatsLowCreditThreshold*100), statsLowCreditThreshold)
+		fmt.Fprintf(tw, "%s\t - %s\f", conf.Backend, backendHelp)
+		fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
+		fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
+		fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
+		fmt.Fprintf(tw, "%s\t - %s\f", conf.TrustedProxies, trustedProxiesHelp)
+		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash32Share*100), slash32ShareHelp)
+		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash24Share*100), slash24ShareHelp)
+		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash16Share*100), slash16ShareHelp)
+		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.UserAgentShare*100), userAgentShareHelp)
 	}
 
 	cpuCountInt, err := cpu.Counts(true)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 	cpuCount = float64(cpuCountInt)
 
-	slash32 = bucket.NewSlash32(cpuCount*0.1, conf.trustedProxiesMap, 32)
-	slash24 = bucket.NewSlash32(cpuCount*0.25, conf.trustedProxiesMap, 24)
-	slash16 = bucket.NewSlash32(cpuCount*0.5, conf.trustedProxiesMap, 16)
-	userAgent = bucket.NewUserAgent(cpuCount * 0.1)
+	slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32)
+	slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24)
+	slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16)
+	userAgent = bucket.NewUserAgent(cpuCount * conf.UserAgentShare)
+
 }
 
 func middleware(h http.Handler) http.Handler {
@@ -155,25 +190,55 @@ func middleware(h http.Handler) http.Handler {
 func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
-		slash32.Dump(statsLog)
-		slash24.Dump(statsLog)
-		slash16.Dump(statsLog)
-		userAgent.Dump(statsLog)
-
+		slash32.Dump(statsLog, conf.StatsLowCreditThreshold)
+		slash24.Dump(statsLog, conf.StatsLowCreditThreshold)
+		slash16.Dump(statsLog, conf.StatsLowCreditThreshold)
+		userAgent.Dump(statsLog, conf.StatsLowCreditThreshold)
 	}
 }
 
 func listen() {
-	url, err := url.Parse(conf.backend)
+	url, err := url.Parse(conf.Backend)
 	if err != nil {
 		log.Fatal(err)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	handler := middleware(proxy)
-	http.ListenAndServe(fmt.Sprintf(":%d", conf.listenPort), handler)
+	http.ListenAndServe(fmt.Sprintf(":%d", conf.ListenPort), handler)
+}
+
+func sighupHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGHUP)
+	for {
+		<-c
+		log.Info("SIGHUP received, reloading config")
+
+		var newConfig config
+		jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
+		if err != nil {
+			log.Error(err)
+			log.Error("Refusing to reload on unreadable config file.")
+		}
+		if err = json.Unmarshal(jsonStr, &newConfig); err != nil {
+			log.Error(err)
+			log.Error("Refusing to reload on unparseable config file.")
+		}
+
+		if newConfig.Debug != conf.Debug {
+			conf.Debug = newConfig.Debug
+			if conf.Debug {
+				log.SetLevel(log.DebugLevel)
+			} else {
+				log.SetLevel(log.WarnLevel)
+			}
+		}
+		conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
+	}
 }
 
 func main() {
+	go sighupHandler()
 	go statsLogger()
 	listen()
 }

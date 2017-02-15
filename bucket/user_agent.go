@@ -54,9 +54,9 @@ func (b *UserAgent) Register(r *http.Request, cost float64) {
 	log.Info(fmt.Sprintf("UserAgent: %s, %f billed to '%s', total is %f", r.URL, cost, ua, b.hash[key].credit))
 }
 
-func (b *UserAgent) Dump(l *log.Logger) {
+func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 	for k, c := range b.hash {
-		if c.credit < (b.rate * 10.0 * 0.1) {
+		if c.credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
 			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.userAgent, c.credit))
 		}
 	}

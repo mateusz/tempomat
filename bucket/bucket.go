@@ -9,7 +9,7 @@ import (
 
 type Bucket interface {
 	Register(r *http.Request, cost float64)
-	Dump(l *log.Logger)
+	Dump(l *log.Logger, lowCreditLogThreshold bool)
 }
 
 func getIPAdressFromHeaders(r *http.Request, m map[string]bool) string {

@@ -76,9 +76,9 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 	log.Info(fmt.Sprintf("Slash32(%d): %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].credit))
 }
 
-func (b *Slash32) Dump(l *log.Logger) {
+func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 	for k, c := range b.hash {
-		if c.credit < (b.rate * 10.0 * 0.1) {
+		if c.credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
 			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
 		}
 	}
