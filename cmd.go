@@ -200,6 +200,15 @@ func statsLogger() {
 	}
 }
 
+type BucketDumper struct {
+}
+
+func (bd *BucketDumper) Slash32(args *api.EmptyArgs, reply *map[string]bucket.EntrySlash32) error {
+	var err error
+	*reply, err = Slash32.DumpAll()
+	return err
+}
+
 func listen() {
 	url, err := url.Parse(conf.Backend)
 	if err != nil {
@@ -238,25 +247,6 @@ func sighupHandler() {
 		}
 		conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
 	}
-}
-
-type BucketDumper struct {
-}
-
-func (bd *BucketDumper) Slash32(args *api.EmptyArgs, resp *string) error {
-	return Slash32.DumpAll(args, resp)
-}
-
-func (bd *BucketDumper) Slash24(args *api.EmptyArgs, resp *string) error {
-	return Slash24.DumpAll(args, resp)
-}
-
-func (bd *BucketDumper) Slash16(args *api.EmptyArgs, resp *string) error {
-	return Slash16.DumpAll(args, resp)
-}
-
-func (bd *BucketDumper) UserAgent(args *api.EmptyArgs, resp *string) error {
-	return UserAgent.DumpAll(args, resp)
 }
 
 func main() {

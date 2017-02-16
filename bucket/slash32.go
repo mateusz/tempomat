@@ -10,12 +10,11 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/mateusz/tempomat/api"
 )
 
 type Slash32 struct {
 	Bucket
-	hash              map[string]entrySlash32
+	hash              map[string]EntrySlash32
 	hashMutex         sync.Mutex
 	trustedProxiesMap map[string]bool
 	netmask           int
@@ -26,7 +25,7 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *S
 		Bucket: Bucket{
 			rate: rate,
 		},
-		hash:              make(map[string]entrySlash32),
+		hash:              make(map[string]EntrySlash32),
 		hashMutex:         sync.Mutex{},
 		trustedProxiesMap: trustedProxiesMap,
 		netmask:           netmask,
@@ -35,9 +34,9 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *S
 	return b
 }
 
-type entrySlash32 struct {
-	netmask string
-	credit  float64
+type EntrySlash32 struct {
+	Netmask string
+	Credit  float64
 }
 
 func (b *Slash32) Register(r *http.Request, cost float64) {
@@ -66,40 +65,44 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 
 	b.hashMutex.Lock()
 	if c, ok := b.hash[key]; ok {
-		c.credit -= cost
+		c.Credit -= cost
 		b.hash[key] = c
 	} else {
-		b.hash[key] = entrySlash32{
-			netmask: ipnet,
-			credit:  b.rate*10.0 - cost,
+		b.hash[key] = EntrySlash32{
+			Netmask: ipnet,
+			Credit:  b.rate*10.0 - cost,
 		}
 	}
 	b.hashMutex.Unlock()
 
-	log.Info(fmt.Sprintf("Slash32(%d): %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].credit))
+	log.Info(fmt.Sprintf("Slash32(%d): %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
 }
 
 func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
+	fmt.Printf("%#v\n", len(b.hash))
 	for k, c := range b.hash {
-		if c.credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
-			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
+		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
+			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
 		}
 	}
 }
 
-func (b *Slash32) DumpAll(args *api.EmptyArgs, reply *string) error {
-	*reply = "aaa"
-	return nil
+func (b *Slash32) DumpAll() (map[string]EntrySlash32, error) {
+	h := make(map[string]EntrySlash32)
+	for k, v := range b.hash {
+		h[k] = v
+	}
+	return h, nil
 }
 
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
 		for k, c := range b.hash {
-			if c.credit+b.rate > b.rate*10.0 {
-				c.credit = b.rate * 10.0
+			if c.Credit+b.rate > b.rate*10.0 {
+				c.Credit = b.rate * 10.0
 			} else {
-				c.credit += b.rate
+				c.Credit += b.rate
 			}
 			b.hash[k] = c
 		}
