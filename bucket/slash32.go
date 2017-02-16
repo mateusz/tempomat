@@ -10,10 +10,11 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mateusz/tempomat/api"
 )
 
 type Slash32 struct {
-	rate              float64
+	Bucket
 	hash              map[string]entrySlash32
 	hashMutex         sync.Mutex
 	trustedProxiesMap map[string]bool
@@ -22,7 +23,9 @@ type Slash32 struct {
 
 func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *Slash32 {
 	b := &Slash32{
-		rate:              rate,
+		Bucket: Bucket{
+			rate: rate,
+		},
 		hash:              make(map[string]entrySlash32),
 		hashMutex:         sync.Mutex{},
 		trustedProxiesMap: trustedProxiesMap,
@@ -82,6 +85,11 @@ func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.netmask, c.credit))
 		}
 	}
+}
+
+func (b *Slash32) DumpAll(args *api.EmptyArgs, reply *string) error {
+	*reply = "aaa"
+	return nil
 }
 
 func (b *Slash32) ticker() {

@@ -3,13 +3,14 @@ package bucket
 import (
 	"net/http"
 	"strings"
-
-	log "github.com/Sirupsen/logrus"
 )
 
-type Bucket interface {
-	Register(r *http.Request, cost float64)
-	Dump(l *log.Logger, lowCreditLogThreshold bool)
+type Bucket struct {
+	rate float64
+}
+
+func (b *Bucket) SetRate(rate float64) {
+	b.rate = rate
 }
 
 func getIPAdressFromHeaders(r *http.Request, m map[string]bool) string {

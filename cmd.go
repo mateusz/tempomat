@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/rpc"
 	"net/url"
 	"os"
 	"os/signal"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mateusz/tempomat/api"
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/rifflock/lfshook"
 	"github.com/shirou/gopsutil/cpu"
@@ -38,10 +41,10 @@ type config struct {
 
 var conf config
 
-var slash32 *bucket.Slash32
-var slash24 *bucket.Slash32
-var slash16 *bucket.Slash32
-var userAgent *bucket.UserAgent
+var Slash32 *bucket.Slash32
+var Slash24 *bucket.Slash32
+var Slash16 *bucket.Slash32
+var UserAgent *bucket.UserAgent
 var statsLog *log.Logger
 var cpuCount float64
 
@@ -154,10 +157,10 @@ func init() {
 	}
 	cpuCount = float64(cpuCountInt)
 
-	slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32)
-	slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24)
-	slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16)
-	userAgent = bucket.NewUserAgent(cpuCount * conf.UserAgentShare)
+	Slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32)
+	Slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24)
+	Slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16)
+	UserAgent = bucket.NewUserAgent(cpuCount * conf.UserAgentShare)
 
 }
 
@@ -180,20 +183,20 @@ func middleware(h http.Handler) http.Handler {
 			cost = cost / u
 		}
 
-		slash32.Register(r, cost)
-		slash24.Register(r, cost)
-		slash16.Register(r, cost)
-		userAgent.Register(r, cost)
+		Slash32.Register(r, cost)
+		Slash24.Register(r, cost)
+		Slash16.Register(r, cost)
+		UserAgent.Register(r, cost)
 	})
 }
 
 func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
-		slash32.Dump(statsLog, conf.StatsLowCreditThreshold)
-		slash24.Dump(statsLog, conf.StatsLowCreditThreshold)
-		slash16.Dump(statsLog, conf.StatsLowCreditThreshold)
-		userAgent.Dump(statsLog, conf.StatsLowCreditThreshold)
+		Slash32.Dump(statsLog, conf.StatsLowCreditThreshold)
+		Slash24.Dump(statsLog, conf.StatsLowCreditThreshold)
+		Slash16.Dump(statsLog, conf.StatsLowCreditThreshold)
+		UserAgent.Dump(statsLog, conf.StatsLowCreditThreshold)
 	}
 }
 
@@ -237,8 +240,37 @@ func sighupHandler() {
 	}
 }
 
+type BucketDumper struct {
+}
+
+func (bd *BucketDumper) Slash32(args *api.EmptyArgs, resp *string) error {
+	return Slash32.DumpAll(args, resp)
+}
+
+func (bd *BucketDumper) Slash24(args *api.EmptyArgs, resp *string) error {
+	return Slash24.DumpAll(args, resp)
+}
+
+func (bd *BucketDumper) Slash16(args *api.EmptyArgs, resp *string) error {
+	return Slash16.DumpAll(args, resp)
+}
+
+func (bd *BucketDumper) UserAgent(args *api.EmptyArgs, resp *string) error {
+	return UserAgent.DumpAll(args, resp)
+}
+
 func main() {
 	go sighupHandler()
 	go statsLogger()
+
+	bd := new(BucketDumper)
+	rpc.Register(bd)
+	rpc.HandleHTTP()
+	l, e := net.Listen("tcp", ":29999")
+	if e != nil {
+		log.Fatal("Unable to set up RPC listener:", e)
+	}
+	go http.Serve(l, nil)
+
 	listen()
 }

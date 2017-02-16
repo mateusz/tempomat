@@ -9,17 +9,20 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mateusz/tempomat/api"
 )
 
 type UserAgent struct {
-	rate      float64
+	Bucket
 	hash      map[string]entryUserAgent
 	hashMutex sync.Mutex
 }
 
 func NewUserAgent(rate float64) *UserAgent {
 	b := &UserAgent{
-		rate:      rate,
+		Bucket: Bucket{
+			rate: rate,
+		},
 		hash:      make(map[string]entryUserAgent),
 		hashMutex: sync.Mutex{},
 	}
@@ -60,6 +63,11 @@ func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.userAgent, c.credit))
 		}
 	}
+}
+
+func (b *UserAgent) DumpAll(args *api.EmptyArgs, reply *string) error {
+	*reply = "bbb"
+	return nil
 }
 
 func (b *UserAgent) ticker() {
