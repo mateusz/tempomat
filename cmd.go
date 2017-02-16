@@ -57,10 +57,6 @@ func utilisation() (float64, error) {
 	return load.Load1 / cpuCount, nil
 }
 
-func printConfig() {
-
-}
-
 func init() {
 
 	log.SetOutput(os.Stderr)
@@ -203,9 +199,27 @@ func statsLogger() {
 type BucketDumper struct {
 }
 
-func (bd *BucketDumper) Slash32(args *api.EmptyArgs, reply *map[string]bucket.EntrySlash32) error {
+func (bd *BucketDumper) Slash32(args *api.EmptyArgs, reply *bucket.DumpList) error {
 	var err error
-	*reply, err = Slash32.DumpAll()
+	*reply, err = Slash32.DumpList()
+	return err
+}
+
+func (bd *BucketDumper) Slash24(args *api.EmptyArgs, reply *bucket.DumpList) error {
+	var err error
+	*reply, err = Slash24.DumpList()
+	return err
+}
+
+func (bd *BucketDumper) Slash16(args *api.EmptyArgs, reply *bucket.DumpList) error {
+	var err error
+	*reply, err = Slash16.DumpList()
+	return err
+}
+
+func (bd *BucketDumper) UserAgent(args *api.EmptyArgs, reply *bucket.DumpList) error {
+	var err error
+	*reply, err = UserAgent.DumpList()
 	return err
 }
 

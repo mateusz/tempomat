@@ -9,7 +9,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/mateusz/tempomat/api"
 )
 
 type UserAgent struct {
@@ -31,8 +30,8 @@ func NewUserAgent(rate float64) *UserAgent {
 }
 
 type entryUserAgent struct {
-	userAgent string
-	credit    float64
+	UA     string
+	Credit float64
 }
 
 func (b *UserAgent) Register(r *http.Request, cost float64) {
@@ -44,40 +43,46 @@ func (b *UserAgent) Register(r *http.Request, cost float64) {
 
 	b.hashMutex.Lock()
 	if c, ok := b.hash[key]; ok {
-		c.credit -= cost
+		c.Credit -= cost
 		b.hash[key] = c
 	} else {
 		b.hash[key] = entryUserAgent{
-			userAgent: ua,
-			credit:    b.rate*10.0 - cost,
+			UA:     ua,
+			Credit: b.rate*10.0 - cost,
 		}
 	}
 	b.hashMutex.Unlock()
 
-	log.Info(fmt.Sprintf("UserAgent: %s, %f billed to '%s', total is %f", r.URL, cost, ua, b.hash[key].credit))
+	log.Info(fmt.Sprintf("UserAgent: %s, %f billed to '%s', total is %f", r.URL, cost, ua, b.hash[key].Credit))
 }
 
 func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 	for k, c := range b.hash {
-		if c.credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
-			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.userAgent, c.credit))
+		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
+			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.UA, c.Credit))
 		}
 	}
 }
 
-func (b *UserAgent) DumpAll(args *api.EmptyArgs, reply *string) error {
-	*reply = "bbb"
-	return nil
+func (b *UserAgent) DumpList() (DumpList, error) {
+	l := make(DumpList, len(b.hash))
+	i := 0
+	for _, v := range b.hash {
+		e := DumpEntry{Title: v.UA, Credit: v.Credit}
+		l[i] = e
+		i++
+	}
+	return l, nil
 }
 
 func (b *UserAgent) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
 		for k, c := range b.hash {
-			if c.credit+b.rate > b.rate*10.0 {
-				c.credit = b.rate * 10.0
+			if c.Credit+b.rate > b.rate*10.0 {
+				c.Credit = b.rate * 10.0
 			} else {
-				c.credit += b.rate
+				c.Credit += b.rate
 			}
 			b.hash[k] = c
 		}

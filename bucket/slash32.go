@@ -75,24 +75,26 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 	}
 	b.hashMutex.Unlock()
 
-	log.Info(fmt.Sprintf("Slash32(%d): %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
+	log.Info(fmt.Sprintf("Slash%d: %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
 }
 
 func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
-	fmt.Printf("%#v\n", len(b.hash))
 	for k, c := range b.hash {
 		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
-			l.Info(fmt.Sprintf("Slash32(%d),%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
+			l.Info(fmt.Sprintf("Slash%d,%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
 		}
 	}
 }
 
-func (b *Slash32) DumpAll() (map[string]EntrySlash32, error) {
-	h := make(map[string]EntrySlash32)
-	for k, v := range b.hash {
-		h[k] = v
+func (b *Slash32) DumpList() (DumpList, error) {
+	l := make(DumpList, len(b.hash))
+	i := 0
+	for _, v := range b.hash {
+		e := DumpEntry{Title: v.Netmask, Credit: v.Credit}
+		l[i] = e
+		i++
 	}
-	return h, nil
+	return l, nil
 }
 
 func (b *Slash32) ticker() {
