@@ -105,8 +105,8 @@ Create config file in `/etc/tempomat.json`:
 	"slash32Share": 0.1,
 	"slash24Share": 0.25,
 	"slash16Share": 0.5,
-	"userAgentShare": 0.1
-	
+	"userAgentShare": 0.1,
+	"hashMaxLen": 100
 }
 ```
 
@@ -127,15 +127,6 @@ go build github.com/mateusz/tempomat/doctor
 # Preferred way is to watch:
 watch -n 1 ./doctor --bucket=UserAgent
 ```
-
-### TODO
-
-- Fix the fatal error with concurrent map read and map write, when using `doctor`
-- Rotate logs
-- Remove old hash entries from the list when they reach max credit
-- Keep hash size to a given max level
-- make ...share parameters live-reloadable
-- the logs sometimes don't get written if the file already exists
 
 
 
