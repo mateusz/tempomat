@@ -15,7 +15,7 @@ import (
 type Slash32 struct {
 	Bucket
 	hash              map[string]EntrySlash32
-	hashMutex         sync.Mutex
+	hashMutex         sync.RWMutex
 	trustedProxiesMap map[string]bool
 	netmask           int
 }
@@ -26,7 +26,7 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *S
 			rate: rate,
 		},
 		hash:              make(map[string]EntrySlash32),
-		hashMutex:         sync.Mutex{},
+		hashMutex:         sync.RWMutex{},
 		trustedProxiesMap: trustedProxiesMap,
 		netmask:           netmask,
 	}
@@ -73,33 +73,38 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 			Credit:  b.rate*10.0 - cost,
 		}
 	}
-	b.hashMutex.Unlock()
 
 	log.Info(fmt.Sprintf("Slash%d: %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
+	b.hashMutex.Unlock()
 }
 
 func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
+	b.hashMutex.RLock()
 	for k, c := range b.hash {
 		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
 			l.Info(fmt.Sprintf("Slash%d,%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
 		}
 	}
+	b.hashMutex.RUnlock()
 }
 
 func (b *Slash32) DumpList() (DumpList, error) {
 	l := make(DumpList, len(b.hash))
 	i := 0
+	b.hashMutex.RLock()
 	for _, v := range b.hash {
 		e := DumpEntry{Title: v.Netmask, Credit: v.Credit}
 		l[i] = e
 		i++
 	}
+	b.hashMutex.RUnlock()
 	return l, nil
 }
 
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
+		b.hashMutex.Lock()
 		for k, c := range b.hash {
 			if c.Credit+b.rate > b.rate*10.0 {
 				c.Credit = b.rate * 10.0
@@ -108,5 +113,6 @@ func (b *Slash32) ticker() {
 			}
 			b.hash[k] = c
 		}
+		b.hashMutex.Unlock()
 	}
 }
