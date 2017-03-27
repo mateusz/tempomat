@@ -22,6 +22,8 @@ import (
 	"github.com/rifflock/lfshook"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/load"
+
+	_ "net/http/pprof"
 )
 
 type config struct {
@@ -36,6 +38,7 @@ type config struct {
 	Slash24Share            float64 `json:"slash24Share"`
 	Slash16Share            float64 `json:"slash16Share"`
 	UserAgentShare          float64 `json:"userAgentShare"`
+	HashMaxLen              int     `json:"hashMaxLen"`
 	trustedProxiesMap       map[string]bool
 }
 
@@ -74,6 +77,7 @@ func init() {
 		slash24ShareHelp        = "Slash24 max CPU share"
 		slash16ShareHelp        = "Slash16 max CPU share"
 		userAgentShareHelp      = "UserAgent max CPU share"
+		hashMaxLenHelp          = "Maximum amount of entries in the hash"
 	)
 	conf = config{
 		Debug: false,
@@ -87,6 +91,7 @@ func init() {
 		Slash24Share:            0.25,
 		Slash16Share:            0.5,
 		UserAgentShare:          0.1,
+		HashMaxLen:              1000,
 		trustedProxiesMap:       make(map[string]bool),
 	}
 
@@ -145,6 +150,7 @@ func init() {
 		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash24Share*100), slash24ShareHelp)
 		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash16Share*100), slash16ShareHelp)
 		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.UserAgentShare*100), userAgentShareHelp)
+		fmt.Fprintf(tw, "%d\t - %s\f", conf.HashMaxLen, hashMaxLenHelp)
 	}
 
 	cpuCountInt, err := cpu.Counts(true)
@@ -158,6 +164,10 @@ func init() {
 	Slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16)
 	UserAgent = bucket.NewUserAgent(cpuCount * conf.UserAgentShare)
 
+	Slash32.SetHashMaxLen(conf.HashMaxLen)
+	Slash24.SetHashMaxLen(conf.HashMaxLen)
+	Slash16.SetHashMaxLen(conf.HashMaxLen)
+	UserAgent.SetHashMaxLen(conf.HashMaxLen)
 }
 
 func middleware(h http.Handler) http.Handler {
@@ -200,27 +210,23 @@ type BucketDumper struct {
 }
 
 func (bd *BucketDumper) Slash32(args *api.EmptyArgs, reply *bucket.DumpList) error {
-	var err error
-	*reply, err = Slash32.DumpList()
-	return err
+	*reply = Slash32.DumpList()
+	return nil
 }
 
 func (bd *BucketDumper) Slash24(args *api.EmptyArgs, reply *bucket.DumpList) error {
-	var err error
-	*reply, err = Slash24.DumpList()
-	return err
+	*reply = Slash24.DumpList()
+	return nil
 }
 
 func (bd *BucketDumper) Slash16(args *api.EmptyArgs, reply *bucket.DumpList) error {
-	var err error
-	*reply, err = Slash16.DumpList()
-	return err
+	*reply = Slash16.DumpList()
+	return nil
 }
 
 func (bd *BucketDumper) UserAgent(args *api.EmptyArgs, reply *bucket.DumpList) error {
-	var err error
-	*reply, err = UserAgent.DumpList()
-	return err
+	*reply = UserAgent.DumpList()
+	return nil
 }
 
 func listen() {
@@ -260,10 +266,23 @@ func sighupHandler() {
 			}
 		}
 		conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
+
+		if newConfig.HashMaxLen != conf.HashMaxLen {
+			conf.HashMaxLen = newConfig.HashMaxLen
+			Slash32.SetHashMaxLen(conf.HashMaxLen)
+			Slash24.SetHashMaxLen(conf.HashMaxLen)
+			Slash16.SetHashMaxLen(conf.HashMaxLen)
+			UserAgent.SetHashMaxLen(conf.HashMaxLen)
+		}
+
 	}
 }
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+
 	go sighupHandler()
 	go statsLogger()
 

@@ -51,7 +51,7 @@ func main() {
 		log.Fatal("Call error:", err)
 	}
 
-	sort.Sort(bucket.CreditSortList(reply))
+	sort.Sort(bucket.CreditSortDumpList(reply))
 
 	fmt.Printf(conf.Bucket + "\n")
 	fmt.Printf("=============\n")

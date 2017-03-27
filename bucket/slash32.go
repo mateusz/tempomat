@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type Slash32 struct {
 	hashMutex         sync.RWMutex
 	trustedProxiesMap map[string]bool
 	netmask           int
+	hashMaxLen        int
 }
 
 func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *Slash32 {
@@ -29,6 +31,7 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *S
 		hashMutex:         sync.RWMutex{},
 		trustedProxiesMap: trustedProxiesMap,
 		netmask:           netmask,
+		hashMaxLen:        1000,
 	}
 	go b.ticker()
 	return b
@@ -37,6 +40,12 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *S
 type EntrySlash32 struct {
 	Netmask string
 	Credit  float64
+}
+
+func (b *Slash32) SetHashMaxLen(hashMaxLen int) {
+	b.hashMutex.Lock()
+	b.hashMaxLen = hashMaxLen
+	b.hashMutex.Unlock()
 }
 
 func (b *Slash32) Register(r *http.Request, cost float64) {
@@ -88,30 +97,54 @@ func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 	b.hashMutex.RUnlock()
 }
 
-func (b *Slash32) DumpList() (DumpList, error) {
+func (b *Slash32) DumpList() DumpList {
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
+	return b.DumpListNoLock()
+}
+
+func (b *Slash32) DumpListNoLock() DumpList {
 	l := make(DumpList, len(b.hash))
 	i := 0
-	b.hashMutex.RLock()
-	for _, v := range b.hash {
-		e := DumpEntry{Title: v.Netmask, Credit: v.Credit}
+	for k, v := range b.hash {
+		e := DumpEntry{Hash: k, Title: v.Netmask, Credit: v.Credit}
 		l[i] = e
 		i++
 	}
-	b.hashMutex.RUnlock()
-	return l, nil
+	return l
+}
+
+func (b *Slash32) Truncate(truncatedSize int) {
+	newHash := make(map[string]EntrySlash32)
+
+	b.hashMutex.Lock()
+	dumpList := b.DumpListNoLock()
+	sort.Sort(CreditSortDumpList(dumpList))
+	for i := 0; i < truncatedSize; i++ {
+		newHash[dumpList[i].Hash] = EntrySlash32{
+			Netmask: dumpList[i].Title,
+			Credit:  dumpList[i].Credit,
+		}
+	}
+	b.hash = newHash
+	b.hashMutex.Unlock()
 }
 
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
+		if len(b.hash) > b.hashMaxLen {
+			b.Truncate(b.hashMaxLen)
+		}
 		b.hashMutex.Lock()
 		for k, c := range b.hash {
 			if c.Credit+b.rate > b.rate*10.0 {
-				c.Credit = b.rate * 10.0
+				// Purge entries that are at their max credit.
+				delete(b.hash, k)
 			} else {
 				c.Credit += b.rate
+				b.hash[k] = c
 			}
-			b.hash[k] = c
 		}
 		b.hashMutex.Unlock()
 	}

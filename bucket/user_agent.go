@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -13,8 +14,9 @@ import (
 
 type UserAgent struct {
 	Bucket
-	hash      map[string]entryUserAgent
-	hashMutex sync.RWMutex
+	hash       map[string]entryUserAgent
+	hashMutex  sync.RWMutex
+	hashMaxLen int
 }
 
 func NewUserAgent(rate float64) *UserAgent {
@@ -22,8 +24,9 @@ func NewUserAgent(rate float64) *UserAgent {
 		Bucket: Bucket{
 			rate: rate,
 		},
-		hash:      make(map[string]entryUserAgent),
-		hashMutex: sync.RWMutex{},
+		hash:       make(map[string]entryUserAgent),
+		hashMutex:  sync.RWMutex{},
+		hashMaxLen: 1000,
 	}
 	go b.ticker()
 	return b
@@ -32,6 +35,12 @@ func NewUserAgent(rate float64) *UserAgent {
 type entryUserAgent struct {
 	UA     string
 	Credit float64
+}
+
+func (b *UserAgent) SetHashMaxLen(hashMaxLen int) {
+	b.hashMutex.Lock()
+	b.hashMaxLen = hashMaxLen
+	b.hashMutex.Unlock()
 }
 
 func (b *UserAgent) Register(r *http.Request, cost float64) {
@@ -66,30 +75,54 @@ func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
 	b.hashMutex.RUnlock()
 }
 
-func (b *UserAgent) DumpList() (DumpList, error) {
+func (b *UserAgent) DumpList() DumpList {
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
+	return b.DumpListNoLock()
+}
+
+func (b *UserAgent) DumpListNoLock() DumpList {
 	l := make(DumpList, len(b.hash))
 	i := 0
-	b.hashMutex.RLock()
 	for _, v := range b.hash {
 		e := DumpEntry{Title: v.UA, Credit: v.Credit}
 		l[i] = e
 		i++
 	}
-	b.hashMutex.RUnlock()
-	return l, nil
+	return l
+}
+
+func (b *UserAgent) Truncate(truncatedSize int) {
+	newHash := make(map[string]entryUserAgent)
+
+	b.hashMutex.Lock()
+	dumpList := b.DumpListNoLock()
+	sort.Sort(CreditSortDumpList(dumpList))
+	for i := 0; i < truncatedSize; i++ {
+		newHash[dumpList[i].Hash] = entryUserAgent{
+			UA:     dumpList[i].Title,
+			Credit: dumpList[i].Credit,
+		}
+	}
+	b.hash = newHash
+	b.hashMutex.Unlock()
 }
 
 func (b *UserAgent) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
+		if len(b.hash) > b.hashMaxLen {
+			b.Truncate(b.hashMaxLen)
+		}
 		b.hashMutex.Lock()
 		for k, c := range b.hash {
 			if c.Credit+b.rate > b.rate*10.0 {
-				c.Credit = b.rate * 10.0
+				// Purge entries that are at their max credit.
+				delete(b.hash, k)
 			} else {
 				c.Credit += b.rate
+				b.hash[k] = c
 			}
-			b.hash[k] = c
 		}
 		b.hashMutex.Unlock()
 	}
