@@ -16,22 +16,20 @@ import (
 type Slash32 struct {
 	Bucket
 	hash              map[string]EntrySlash32
-	hashMutex         sync.RWMutex
 	trustedProxiesMap map[string]bool
 	netmask           int
-	hashMaxLen        int
 }
 
-func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int) *Slash32 {
+func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int, hashMaxLen int) *Slash32 {
 	b := &Slash32{
 		Bucket: Bucket{
-			rate: rate,
+			rate:       rate,
+			mutex:      sync.RWMutex{},
+			hashMaxLen: hashMaxLen,
 		},
 		hash:              make(map[string]EntrySlash32),
-		hashMutex:         sync.RWMutex{},
 		trustedProxiesMap: trustedProxiesMap,
 		netmask:           netmask,
-		hashMaxLen:        1000,
 	}
 	go b.ticker()
 	return b
@@ -43,9 +41,9 @@ type EntrySlash32 struct {
 }
 
 func (b *Slash32) SetHashMaxLen(hashMaxLen int) {
-	b.hashMutex.Lock()
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 	b.hashMaxLen = hashMaxLen
-	b.hashMutex.Unlock()
 }
 
 func (b *Slash32) Register(r *http.Request, cost float64) {
@@ -72,7 +70,7 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 	io.WriteString(hash, ipnet)
 	key := fmt.Sprintf("%x", hash.Sum(nil))
 
-	b.hashMutex.Lock()
+	b.mutex.Lock()
 	if c, ok := b.hash[key]; ok {
 		c.Credit -= cost
 		b.hash[key] = c
@@ -84,26 +82,26 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 	}
 
 	log.Info(fmt.Sprintf("Slash%d: %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
-	b.hashMutex.Unlock()
+	b.mutex.Unlock()
 }
 
 func (b *Slash32) Dump(l *log.Logger, lowCreditLogThreshold float64) {
-	b.hashMutex.RLock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
 	for k, c := range b.hash {
 		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
 			l.Info(fmt.Sprintf("Slash%d,%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
 		}
 	}
-	b.hashMutex.RUnlock()
 }
 
 func (b *Slash32) DumpList() DumpList {
-	b.hashMutex.RLock()
-	defer b.hashMutex.RUnlock()
-	return b.DumpListNoLock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	return b.dumpListNoLock()
 }
 
-func (b *Slash32) DumpListNoLock() DumpList {
+func (b *Slash32) dumpListNoLock() DumpList {
 	l := make(DumpList, len(b.hash))
 	i := 0
 	for k, v := range b.hash {
@@ -114,11 +112,10 @@ func (b *Slash32) DumpListNoLock() DumpList {
 	return l
 }
 
-func (b *Slash32) Truncate(truncatedSize int) {
+func (b *Slash32) truncate(truncatedSize int) {
 	newHash := make(map[string]EntrySlash32)
 
-	b.hashMutex.Lock()
-	dumpList := b.DumpListNoLock()
+	dumpList := b.dumpListNoLock()
 	sort.Sort(CreditSortDumpList(dumpList))
 	for i := 0; i < truncatedSize; i++ {
 		newHash[dumpList[i].Hash] = EntrySlash32{
@@ -127,16 +124,15 @@ func (b *Slash32) Truncate(truncatedSize int) {
 		}
 	}
 	b.hash = newHash
-	b.hashMutex.Unlock()
 }
 
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
+		b.mutex.Lock()
 		if len(b.hash) > b.hashMaxLen {
-			b.Truncate(b.hashMaxLen)
+			b.truncate(b.hashMaxLen)
 		}
-		b.hashMutex.Lock()
 		for k, c := range b.hash {
 			if c.Credit+b.rate > b.rate*10.0 {
 				// Purge entries that are at their max credit.
@@ -146,6 +142,6 @@ func (b *Slash32) ticker() {
 				b.hash[k] = c
 			}
 		}
-		b.hashMutex.Unlock()
+		b.mutex.Unlock()
 	}
 }

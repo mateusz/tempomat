@@ -42,6 +42,24 @@ type config struct {
 	trustedProxiesMap       map[string]bool
 }
 
+func newConfig() config {
+	return config{
+		Debug: false,
+		StatsLowCreditThreshold: 0.1,
+		Backend:                 "http://localhost:80",
+		ListenPort:              8888,
+		LogFile:                 "",
+		StatsFile:               "",
+		TrustedProxies:          "",
+		Slash32Share:            0.1,
+		Slash24Share:            0.25,
+		Slash16Share:            0.5,
+		UserAgentShare:          0.1,
+		HashMaxLen:              1000,
+		trustedProxiesMap:       make(map[string]bool),
+	}
+}
+
 var conf config
 
 var Slash32 *bucket.Slash32
@@ -65,35 +83,7 @@ func init() {
 	log.SetOutput(os.Stderr)
 	log.SetLevel(log.WarnLevel)
 
-	const (
-		debugHelp               = "Debug mode"
-		statsLowCreditThreshold = "Statistics low credit threshold"
-		backendHelp             = "Backend URI"
-		listenPortHelp          = "Local HTTP listen port"
-		logFileHelp             = "Log file"
-		statsFileHelp           = "Stats file"
-		trustedProxiesHelp      = "Trusted proxy ips"
-		slash32ShareHelp        = "Slash32 max CPU share"
-		slash24ShareHelp        = "Slash24 max CPU share"
-		slash16ShareHelp        = "Slash16 max CPU share"
-		userAgentShareHelp      = "UserAgent max CPU share"
-		hashMaxLenHelp          = "Maximum amount of entries in the hash"
-	)
-	conf = config{
-		Debug: false,
-		StatsLowCreditThreshold: 0.1,
-		Backend:                 "http://localhost:80",
-		ListenPort:              8888,
-		LogFile:                 "",
-		StatsFile:               "",
-		TrustedProxies:          "",
-		Slash32Share:            0.1,
-		Slash24Share:            0.25,
-		Slash16Share:            0.5,
-		UserAgentShare:          0.1,
-		HashMaxLen:              1000,
-		trustedProxiesMap:       make(map[string]bool),
-	}
+	conf = newConfig()
 
 	jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
 	if err != nil {
@@ -137,20 +127,7 @@ func init() {
 		log.SetLevel(log.DebugLevel)
 		statsLog.Level = log.DebugLevel
 
-		tw := tabwriter.NewWriter(os.Stdout, 24, 4, 1, ' ', tabwriter.AlignRight)
-		fmt.Fprintf(tw, "Value\t   Option\f")
-		fmt.Fprintf(tw, "%t\t - %s\f", conf.Debug, debugHelp)
-		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.StatsLowCreditThreshold*100), statsLowCreditThreshold)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.Backend, backendHelp)
-		fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
-		fmt.Fprintf(tw, "%s\t - %s\f", conf.TrustedProxies, trustedProxiesHelp)
-		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash32Share*100), slash32ShareHelp)
-		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash24Share*100), slash24ShareHelp)
-		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash16Share*100), slash16ShareHelp)
-		fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.UserAgentShare*100), userAgentShareHelp)
-		fmt.Fprintf(tw, "%d\t - %s\f", conf.HashMaxLen, hashMaxLenHelp)
+		printConf()
 	}
 
 	cpuCountInt, err := cpu.Counts(true)
@@ -159,15 +136,41 @@ func init() {
 	}
 	cpuCount = float64(cpuCountInt)
 
-	Slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32)
-	Slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24)
-	Slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16)
-	UserAgent = bucket.NewUserAgent(cpuCount * conf.UserAgentShare)
+	Slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32, conf.HashMaxLen)
+	Slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24, conf.HashMaxLen)
+	Slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16, conf.HashMaxLen)
+	UserAgent = bucket.NewUserAgent(cpuCount*conf.UserAgentShare, conf.HashMaxLen)
+}
 
-	Slash32.SetHashMaxLen(conf.HashMaxLen)
-	Slash24.SetHashMaxLen(conf.HashMaxLen)
-	Slash16.SetHashMaxLen(conf.HashMaxLen)
-	UserAgent.SetHashMaxLen(conf.HashMaxLen)
+func printConf() {
+	const (
+		debugHelp               = "Debug mode"
+		statsLowCreditThreshold = "Statistics low credit threshold"
+		backendHelp             = "Backend URI"
+		listenPortHelp          = "Local HTTP listen port"
+		logFileHelp             = "Log file"
+		statsFileHelp           = "Stats file"
+		trustedProxiesHelp      = "Trusted proxy ips"
+		slash32ShareHelp        = "Slash32 max CPU share"
+		slash24ShareHelp        = "Slash24 max CPU share"
+		slash16ShareHelp        = "Slash16 max CPU share"
+		userAgentShareHelp      = "UserAgent max CPU share"
+		hashMaxLenHelp          = "Maximum amount of entries in the hash"
+	)
+	tw := tabwriter.NewWriter(os.Stdout, 24, 4, 1, ' ', tabwriter.AlignRight)
+	fmt.Fprintf(tw, "Value\t   Option\f")
+	fmt.Fprintf(tw, "%t\t - %s\f", conf.Debug, debugHelp)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.StatsLowCreditThreshold*100), statsLowCreditThreshold)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.Backend, backendHelp)
+	fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.TrustedProxies, trustedProxiesHelp)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash32Share*100.0), slash32ShareHelp)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash24Share*100.0), slash24ShareHelp)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash16Share*100.0), slash16ShareHelp)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.UserAgentShare*100.0), userAgentShareHelp)
+	fmt.Fprintf(tw, "%d\t - %s\f", conf.HashMaxLen, hashMaxLenHelp)
 }
 
 func middleware(h http.Handler) http.Handler {
@@ -244,9 +247,9 @@ func sighupHandler() {
 	signal.Notify(c, syscall.SIGHUP)
 	for {
 		<-c
-		log.Info("SIGHUP received, reloading config")
+		log.Warn("SIGHUP received, reloading config")
 
-		var newConfig config
+		newConfig := newConfig()
 		jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
 		if err != nil {
 			log.Error(err)
@@ -257,6 +260,7 @@ func sighupHandler() {
 			log.Error("Refusing to reload on unparseable config file.")
 		}
 
+		// TODO: race conditions
 		if newConfig.Debug != conf.Debug {
 			conf.Debug = newConfig.Debug
 			if conf.Debug {
@@ -265,8 +269,26 @@ func sighupHandler() {
 				log.SetLevel(log.WarnLevel)
 			}
 		}
-		conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
+		if newConfig.StatsLowCreditThreshold != conf.StatsLowCreditThreshold {
+			conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
+		}
 
+		if newConfig.Slash32Share != conf.Slash32Share {
+			conf.Slash32Share = newConfig.Slash32Share
+			Slash32.SetRate(conf.Slash32Share)
+		}
+		if newConfig.Slash24Share != conf.Slash24Share {
+			conf.Slash24Share = newConfig.Slash24Share
+			Slash24.SetRate(conf.Slash24Share)
+		}
+		if newConfig.Slash16Share != conf.Slash16Share {
+			conf.Slash16Share = newConfig.Slash16Share
+			Slash16.SetRate(conf.Slash16Share)
+		}
+		if newConfig.UserAgentShare != conf.UserAgentShare {
+			conf.UserAgentShare = newConfig.UserAgentShare
+			UserAgent.SetRate(conf.UserAgentShare)
+		}
 		if newConfig.HashMaxLen != conf.HashMaxLen {
 			conf.HashMaxLen = newConfig.HashMaxLen
 			Slash32.SetHashMaxLen(conf.HashMaxLen)
@@ -275,6 +297,9 @@ func sighupHandler() {
 			UserAgent.SetHashMaxLen(conf.HashMaxLen)
 		}
 
+		if conf.Debug {
+			printConf()
+		}
 	}
 }
 

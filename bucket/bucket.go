@@ -3,14 +3,25 @@ package bucket
 import (
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type Bucket struct {
-	rate float64
+	rate       float64
+	hashMaxLen int
+	mutex      sync.RWMutex
 }
 
 func (b *Bucket) SetRate(rate float64) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 	b.rate = rate
+}
+
+func (b *Bucket) SetHashMaxLen(hashMaxLen int) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.hashMaxLen = hashMaxLen
 }
 
 func getIPAdressFromHeaders(r *http.Request, m map[string]bool) string {

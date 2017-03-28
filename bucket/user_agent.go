@@ -14,19 +14,17 @@ import (
 
 type UserAgent struct {
 	Bucket
-	hash       map[string]entryUserAgent
-	hashMutex  sync.RWMutex
-	hashMaxLen int
+	hash map[string]entryUserAgent
 }
 
-func NewUserAgent(rate float64) *UserAgent {
+func NewUserAgent(rate float64, hashMaxLen int) *UserAgent {
 	b := &UserAgent{
 		Bucket: Bucket{
-			rate: rate,
+			rate:       rate,
+			mutex:      sync.RWMutex{},
+			hashMaxLen: hashMaxLen,
 		},
-		hash:       make(map[string]entryUserAgent),
-		hashMutex:  sync.RWMutex{},
-		hashMaxLen: 1000,
+		hash: make(map[string]entryUserAgent),
 	}
 	go b.ticker()
 	return b
@@ -38,9 +36,9 @@ type entryUserAgent struct {
 }
 
 func (b *UserAgent) SetHashMaxLen(hashMaxLen int) {
-	b.hashMutex.Lock()
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 	b.hashMaxLen = hashMaxLen
-	b.hashMutex.Unlock()
 }
 
 func (b *UserAgent) Register(r *http.Request, cost float64) {
@@ -50,7 +48,7 @@ func (b *UserAgent) Register(r *http.Request, cost float64) {
 	io.WriteString(hash, ua)
 	key := fmt.Sprintf("%x", hash.Sum(nil))
 
-	b.hashMutex.Lock()
+	b.mutex.Lock()
 	if c, ok := b.hash[key]; ok {
 		c.Credit -= cost
 		b.hash[key] = c
@@ -62,26 +60,26 @@ func (b *UserAgent) Register(r *http.Request, cost float64) {
 	}
 
 	log.Info(fmt.Sprintf("UserAgent: %s, %f billed to '%s', total is %f", r.URL, cost, ua, b.hash[key].Credit))
-	b.hashMutex.Unlock()
+	b.mutex.Unlock()
 }
 
 func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
-	b.hashMutex.RLock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
 	for k, c := range b.hash {
 		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
 			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.UA, c.Credit))
 		}
 	}
-	b.hashMutex.RUnlock()
 }
 
 func (b *UserAgent) DumpList() DumpList {
-	b.hashMutex.RLock()
-	defer b.hashMutex.RUnlock()
-	return b.DumpListNoLock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	return b.dumpListNoLock()
 }
 
-func (b *UserAgent) DumpListNoLock() DumpList {
+func (b *UserAgent) dumpListNoLock() DumpList {
 	l := make(DumpList, len(b.hash))
 	i := 0
 	for _, v := range b.hash {
@@ -92,11 +90,10 @@ func (b *UserAgent) DumpListNoLock() DumpList {
 	return l
 }
 
-func (b *UserAgent) Truncate(truncatedSize int) {
+func (b *UserAgent) truncate(truncatedSize int) {
 	newHash := make(map[string]entryUserAgent)
 
-	b.hashMutex.Lock()
-	dumpList := b.DumpListNoLock()
+	dumpList := b.dumpListNoLock()
 	sort.Sort(CreditSortDumpList(dumpList))
 	for i := 0; i < truncatedSize; i++ {
 		newHash[dumpList[i].Hash] = entryUserAgent{
@@ -105,16 +102,15 @@ func (b *UserAgent) Truncate(truncatedSize int) {
 		}
 	}
 	b.hash = newHash
-	b.hashMutex.Unlock()
 }
 
 func (b *UserAgent) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
+		b.mutex.Lock()
 		if len(b.hash) > b.hashMaxLen {
-			b.Truncate(b.hashMaxLen)
+			b.truncate(b.hashMaxLen)
 		}
-		b.hashMutex.Lock()
 		for k, c := range b.hash {
 			if c.Credit+b.rate > b.rate*10.0 {
 				// Purge entries that are at their max credit.
@@ -124,6 +120,6 @@ func (b *UserAgent) ticker() {
 				b.hash[k] = c
 			}
 		}
-		b.hashMutex.Unlock()
+		b.mutex.Unlock()
 	}
 }
