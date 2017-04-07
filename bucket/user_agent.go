@@ -63,14 +63,26 @@ func (b *UserAgent) Register(r *http.Request, cost float64) {
 	b.mutex.Unlock()
 }
 
-func (b *UserAgent) Dump(l *log.Logger, lowCreditLogThreshold float64) {
+func (b *UserAgent) Dump(l *log.Logger) {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
 	for k, c := range b.hash {
-		if c.Credit <= (b.rate * 10.0 * lowCreditLogThreshold) {
+		if c.Credit <= (b.rate * 10.0 * b.lowCreditThreshold) {
 			l.Info(fmt.Sprintf("UserAgent,%s,'%s',%.3f", k, c.UA, c.Credit))
 		}
 	}
+}
+
+func (b *UserAgent) CountUnderThreshold() int {
+	var i int
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	for _, c := range b.hash {
+		if c.Credit <= (b.rate * 10.0 * b.lowCreditThreshold) {
+			i++
+		}
+	}
+	return i
 }
 
 func (b *UserAgent) DumpList() DumpList {

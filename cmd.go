@@ -27,36 +27,42 @@ import (
 )
 
 type config struct {
-	Debug                   bool    `json:"debug"`
-	StatsLowCreditThreshold float64 `json:"statsLowCreditThreshold"`
-	Backend                 string  `json:"backend"`
-	ListenPort              int     `json:"listenPort"`
-	LogFile                 string  `json:"logFile"`
-	StatsFile               string  `json:"statsFile"`
-	TrustedProxies          string  `json:"trustedProxies"`
-	Slash32Share            float64 `json:"slash32Share"`
-	Slash24Share            float64 `json:"slash24Share"`
-	Slash16Share            float64 `json:"slash16Share"`
-	UserAgentShare          float64 `json:"userAgentShare"`
-	HashMaxLen              int     `json:"hashMaxLen"`
-	trustedProxiesMap       map[string]bool
+	Debug              bool    `json:"debug"`
+	LowCreditThreshold float64 `json:"lowCreditThreshold"`
+	Backend            string  `json:"backend"`
+	ListenPort         int     `json:"listenPort"`
+	LogFile            string  `json:"logFile"`
+	StatsFile          string  `json:"statsFile"`
+	Graphite           string  `json:"graphite"`
+	GraphitePrefix     string  `json:"graphitePrefix"`
+	TrustedProxies     string  `json:"trustedProxies"`
+	Slash32Share       float64 `json:"slash32Share"`
+	Slash24Share       float64 `json:"slash24Share"`
+	Slash16Share       float64 `json:"slash16Share"`
+	UserAgentShare     float64 `json:"userAgentShare"`
+	HashMaxLen         int     `json:"hashMaxLen"`
+	graphiteURL        *url.URL
+	trustedProxiesMap  map[string]bool
 }
 
 func newConfig() config {
 	return config{
-		Debug: false,
-		StatsLowCreditThreshold: 0.1,
-		Backend:                 "http://localhost:80",
-		ListenPort:              8888,
-		LogFile:                 "",
-		StatsFile:               "",
-		TrustedProxies:          "",
-		Slash32Share:            0.1,
-		Slash24Share:            0.25,
-		Slash16Share:            0.5,
-		UserAgentShare:          0.1,
-		HashMaxLen:              1000,
-		trustedProxiesMap:       make(map[string]bool),
+		Debug:              false,
+		LowCreditThreshold: 0.1,
+		Backend:            "http://localhost:80",
+		ListenPort:         8888,
+		LogFile:            "",
+		StatsFile:          "",
+		Graphite:           "",
+		GraphitePrefix:     "",
+		TrustedProxies:     "",
+		Slash32Share:       0.1,
+		Slash24Share:       0.25,
+		Slash16Share:       0.5,
+		UserAgentShare:     0.1,
+		HashMaxLen:         1000,
+		graphiteURL:        nil,
+		trustedProxiesMap:  make(map[string]bool),
 	}
 }
 
@@ -79,7 +85,6 @@ func utilisation() (float64, error) {
 }
 
 func init() {
-
 	log.SetOutput(os.Stderr)
 	log.SetLevel(log.WarnLevel)
 
@@ -136,35 +141,61 @@ func init() {
 	}
 	cpuCount = float64(cpuCountInt)
 
+	if conf.Graphite != "" {
+		if conf.GraphitePrefix == "" {
+			log.Fatal("Configuration failure: 'graphitePrefix' is required if 'graphite' is specified")
+		}
+		var err error
+		conf.graphiteURL, err = url.Parse(conf.Graphite)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	Slash32 = bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.trustedProxiesMap, 32, conf.HashMaxLen)
 	Slash24 = bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.trustedProxiesMap, 24, conf.HashMaxLen)
 	Slash16 = bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.trustedProxiesMap, 16, conf.HashMaxLen)
 	UserAgent = bucket.NewUserAgent(cpuCount*conf.UserAgentShare, conf.HashMaxLen)
 }
 
+func sendMetric(metric string, value string) {
+	dialer, err := net.Dial("tcp", conf.graphiteURL.Host)
+	if err != nil {
+		log.Warn(fmt.Sprintf("Failed to connect to graphite server: %s", err))
+		return
+	}
+
+	dialer.Write([]byte(fmt.Sprintf("%s.%s %s %d\n", conf.GraphitePrefix, metric, value, time.Now().Unix())))
+	dialer.Close()
+}
+
 func printConf() {
 	const (
-		debugHelp               = "Debug mode"
-		statsLowCreditThreshold = "Statistics low credit threshold"
-		backendHelp             = "Backend URI"
-		listenPortHelp          = "Local HTTP listen port"
-		logFileHelp             = "Log file"
-		statsFileHelp           = "Stats file"
-		trustedProxiesHelp      = "Trusted proxy ips"
-		slash32ShareHelp        = "Slash32 max CPU share"
-		slash24ShareHelp        = "Slash24 max CPU share"
-		slash16ShareHelp        = "Slash16 max CPU share"
-		userAgentShareHelp      = "UserAgent max CPU share"
-		hashMaxLenHelp          = "Maximum amount of entries in the hash"
+		debugHelp              = "Debug mode"
+		lowCreditThresholdHelp = "Low credit threshold"
+		backendHelp            = "Backend URI"
+		listenPortHelp         = "Local HTTP listen port"
+		logFileHelp            = "Log file"
+		statsFileHelp          = "Stats file"
+		graphiteHelp           = "Graphite server, e.g. 'tcp://localhost:2003'"
+		graphitePrefixHelp     = "Graphite prefix, exclude final dot, e.g. 'chaos.schmall.prod'"
+		trustedProxiesHelp     = "Trusted proxy ips"
+		slash32ShareHelp       = "Slash32 max CPU share"
+		slash24ShareHelp       = "Slash24 max CPU share"
+		slash16ShareHelp       = "Slash16 max CPU share"
+		userAgentShareHelp     = "UserAgent max CPU share"
+		hashMaxLenHelp         = "Maximum amount of entries in the hash"
 	)
 	tw := tabwriter.NewWriter(os.Stdout, 24, 4, 1, ' ', tabwriter.AlignRight)
 	fmt.Fprintf(tw, "Value\t   Option\f")
 	fmt.Fprintf(tw, "%t\t - %s\f", conf.Debug, debugHelp)
-	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.StatsLowCreditThreshold*100), statsLowCreditThreshold)
+	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.LowCreditThreshold*100), lowCreditThresholdHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.Backend, backendHelp)
 	fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.Graphite, graphiteHelp)
+	fmt.Fprintf(tw, "%s\t - %s\f", conf.GraphitePrefix, graphitePrefixHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.TrustedProxies, trustedProxiesHelp)
 	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash32Share*100.0), slash32ShareHelp)
 	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.Slash24Share*100.0), slash24ShareHelp)
@@ -202,10 +233,15 @@ func middleware(h http.Handler) http.Handler {
 func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
-		Slash32.Dump(statsLog, conf.StatsLowCreditThreshold)
-		Slash24.Dump(statsLog, conf.StatsLowCreditThreshold)
-		Slash16.Dump(statsLog, conf.StatsLowCreditThreshold)
-		UserAgent.Dump(statsLog, conf.StatsLowCreditThreshold)
+		Slash32.Dump(statsLog)
+		Slash24.Dump(statsLog)
+		Slash16.Dump(statsLog)
+		UserAgent.Dump(statsLog)
+
+		sendMetric("Slash32", fmt.Sprintf("%d", Slash32.CountUnderThreshold()))
+		sendMetric("Slash24", fmt.Sprintf("%d", Slash24.CountUnderThreshold()))
+		sendMetric("Slash16", fmt.Sprintf("%d", Slash16.CountUnderThreshold()))
+		sendMetric("UserAgent", fmt.Sprintf("%d", UserAgent.CountUnderThreshold()))
 	}
 }
 
@@ -260,17 +296,12 @@ func sighupHandler() {
 			log.Error("Refusing to reload on unparseable config file.")
 		}
 
-		// TODO: race conditions
-		if newConfig.Debug != conf.Debug {
-			conf.Debug = newConfig.Debug
-			if conf.Debug {
-				log.SetLevel(log.DebugLevel)
-			} else {
-				log.SetLevel(log.WarnLevel)
-			}
-		}
-		if newConfig.StatsLowCreditThreshold != conf.StatsLowCreditThreshold {
-			conf.StatsLowCreditThreshold = newConfig.StatsLowCreditThreshold
+		if newConfig.LowCreditThreshold != conf.LowCreditThreshold {
+			conf.LowCreditThreshold = newConfig.LowCreditThreshold
+			Slash32.SetLowCreditThreshold(conf.LowCreditThreshold)
+			Slash24.SetLowCreditThreshold(conf.LowCreditThreshold)
+			Slash16.SetLowCreditThreshold(conf.LowCreditThreshold)
+			UserAgent.SetLowCreditThreshold(conf.LowCreditThreshold)
 		}
 
 		if newConfig.Slash32Share != conf.Slash32Share {

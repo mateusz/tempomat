@@ -7,9 +7,16 @@ import (
 )
 
 type Bucket struct {
-	rate       float64
-	hashMaxLen int
-	mutex      sync.RWMutex
+	lowCreditThreshold float64
+	rate               float64
+	hashMaxLen         int
+	mutex              sync.RWMutex
+}
+
+func (b *Bucket) SetLowCreditThreshold(lowCreditThreshold float64) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.lowCreditThreshold = lowCreditThreshold
 }
 
 func (b *Bucket) SetRate(rate float64) {
