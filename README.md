@@ -96,7 +96,7 @@ Create config file in `/etc/tempomat.json`:
 ```json
 {
 	"debug": false,
-	"statsLowCreditThreshold": 0.1,
+	"lowCreditThreshold": 0.1,
 	"backend": "http://localhost:80",
 	"listenPort": 8888,
 	"logFile": "tempomat-log.log",
@@ -106,7 +106,9 @@ Create config file in `/etc/tempomat.json`:
 	"slash24Share": 0.25,
 	"slash16Share": 0.5,
 	"userAgentShare": 0.1,
-	"hashMaxLen": 100
+	"hashMaxLen": 100,
+	"graphite": "localhost:2003",
+	"graphitePrefix: "some.place.in.graphite"
 }
 ```
 
