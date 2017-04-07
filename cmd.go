@@ -122,7 +122,7 @@ func init() {
 	statsLog.Formatter = &StatsFormatter{}
 	if conf.StatsFile != "" {
 		var err error
-		statsLog.Out, err = os.OpenFile(conf.StatsFile, os.O_RDWR|os.O_CREATE, 0666)
+		statsLog.Out, err = os.OpenFile(conf.StatsFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			log.Fatal(err)
 		}
