@@ -9,7 +9,6 @@ import (
 
 	"github.com/containous/flaeg"
 	"github.com/mateusz/tempomat/api"
-	"github.com/mateusz/tempomat/bucket"
 )
 
 type Configuration struct {
@@ -44,14 +43,16 @@ func main() {
 		log.Fatal("Failed to dial server:", err)
 	}
 
-	var reply bucket.DumpList
-	args := api.EmptyArgs{}
-	err = client.Call("BucketDumper."+conf.Bucket, &args, &reply)
+	var reply api.DumpList
+	args := api.DumpArgs{
+		BucketName: conf.Bucket,
+	}
+	err = client.Call("TempomatAPI.Dump", &args, &reply)
 	if err != nil {
 		log.Fatal("Call error:", err)
 	}
 
-	sort.Sort(bucket.CreditSortDumpList(reply))
+	sort.Sort(api.CreditSortDumpList(reply))
 
 	fmt.Printf(conf.Bucket + "\n")
 	fmt.Printf("=============\n")
