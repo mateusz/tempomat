@@ -7,10 +7,10 @@ import (
 	"net"
 	"net/http"
 	"sort"
-	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mateusz/tempomat/lib/config"
 )
 
 type Slash32 struct {
@@ -24,7 +24,6 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int, ha
 	b := &Slash32{
 		Bucket: Bucket{
 			rate:       rate,
-			mutex:      sync.RWMutex{},
 			hashMaxLen: hashMaxLen,
 		},
 		hash:              make(map[string]EntrySlash32),
@@ -35,21 +34,49 @@ func NewSlash32(rate float64, trustedProxiesMap map[string]bool, netmask int, ha
 	return b
 }
 
-type EntrySlash32 struct {
-	Netmask string
-	Credit  float64
+func (b *Slash32) SetConfig(c config.Config) {
+	b.Lock()
+	switch b.netmask {
+	case 32:
+		b.rate = c.Slash32Share
+	case 24:
+		b.rate = c.Slash24Share
+	case 16:
+		b.rate = c.Slash16Share
+	}
+	b.Unlock()
+
+	b.Bucket.SetConfig(c)
 }
 
-func (b *Slash32) SetHashMaxLen(hashMaxLen int) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	b.hashMaxLen = hashMaxLen
+func (b *Slash32) String() string {
+	b.RLock()
+	defer b.RUnlock()
+	return fmt.Sprintf("Slash%d", b.netmask)
+}
+
+func (b *Slash32) Netmask() int {
+	b.RLock()
+	defer b.RUnlock()
+	return b.netmask
+}
+
+func (b *Slash32) Entries() Entries {
+	b.RLock()
+	defer b.RUnlock()
+
+	l := make(Entries, len(b.hash))
+	i := 0
+	for _, v := range b.hash {
+		l[i] = v
+		i++
+	}
+	return l
 }
 
 func (b *Slash32) Register(r *http.Request, cost float64) {
 	var err error
-	ip := "0.0.0.0"
-	ip, _, err = net.SplitHostPort(r.RemoteAddr)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		if _, ok := b.trustedProxiesMap[ip]; ok {
 			headerIp := getIPAdressFromHeaders(r, b.trustedProxiesMap)
@@ -60,80 +87,37 @@ func (b *Slash32) Register(r *http.Request, cost float64) {
 	}
 
 	ipnet := "0.0.0.0/0"
-	var network *net.IPNet
-	_, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", ip, b.netmask))
+	_, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, b.netmask))
+	// @todo shouldn't this error be handled properly? is it ipv6 compat?
 	if err == nil {
 		ipnet = network.String()
 	}
 
-	hash := md5.New()
-	io.WriteString(hash, ipnet)
-	key := fmt.Sprintf("%x", hash.Sum(nil))
+	b.Lock()
+	entry := EntrySlash32{
+		netmask: ipnet,
+		credit:  b.rate*10.0 - cost,
+	}
+	key := entry.Hash()
 
-	b.mutex.Lock()
 	if c, ok := b.hash[key]; ok {
-		c.Credit -= cost
+		c.credit -= cost
 		b.hash[key] = c
 	} else {
-		b.hash[key] = EntrySlash32{
-			Netmask: ipnet,
-			Credit:  b.rate*10.0 - cost,
-		}
+		b.hash[key] = entry
 	}
-
-	log.Info(fmt.Sprintf("Slash%d: %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].Credit))
-	b.mutex.Unlock()
+	log.Info(fmt.Sprintf("Slash%d: %s, %f billed to '%s' (%s), total is %f", b.netmask, r.URL, cost, ipnet, ip, b.hash[key].credit))
+	b.Unlock()
 }
 
-func (b *Slash32) Dump(l *log.Logger) {
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
-	for k, c := range b.hash {
-		if c.Credit <= (b.rate * 10.0 * b.lowCreditThreshold) {
-			l.Info(fmt.Sprintf("Slash%d,%s,%s,%.3f", b.netmask, k, c.Netmask, c.Credit))
-		}
-	}
-}
-
-func (b *Slash32) CountUnderThreshold() int {
-	var i int
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
-	for _, c := range b.hash {
-		if c.Credit <= (b.rate * 10.0 * b.lowCreditThreshold) {
-			i++
-		}
-	}
-	return i
-}
-
-func (b *Slash32) DumpList() DumpList {
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
-	return b.dumpListNoLock()
-}
-
-func (b *Slash32) dumpListNoLock() DumpList {
-	l := make(DumpList, len(b.hash))
-	i := 0
-	for k, v := range b.hash {
-		e := DumpEntry{Hash: k, Title: v.Netmask, Credit: v.Credit}
-		l[i] = e
-		i++
-	}
-	return l
-}
-
+// Not concurrency safe.
 func (b *Slash32) truncate(truncatedSize int) {
 	newHash := make(map[string]EntrySlash32)
 
-	dumpList := b.dumpListNoLock()
-	sort.Sort(CreditSortDumpList(dumpList))
+	entries := b.Entries()
+	sort.Sort(CreditSortEntries(entries))
 	for i := 0; i < truncatedSize; i++ {
-		newHash[dumpList[i].Hash] = EntrySlash32{
-			Netmask: dumpList[i].Title,
-			Credit:  dumpList[i].Credit,
-		}
+		newHash[entries[i].Hash()] = entries[i].(EntrySlash32)
 	}
 	b.hash = newHash
 }
@@ -141,19 +125,43 @@ func (b *Slash32) truncate(truncatedSize int) {
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
-		b.mutex.Lock()
-		if len(b.hash) > b.hashMaxLen {
-			b.truncate(b.hashMaxLen)
-		}
+		b.Lock()
 		for k, c := range b.hash {
-			if c.Credit+b.rate > b.rate*10.0 {
-				// Purge entries that are at their max credit.
+			// Remove entries that are at their max credits
+			if c.credit+b.rate > b.rate*10.0 {
 				delete(b.hash, k)
 			} else {
-				c.Credit += b.rate
+				c.credit += b.rate
 				b.hash[k] = c
 			}
 		}
-		b.mutex.Unlock()
+		// Truncate some entries to not blow out the memory
+		if len(b.hash) > b.hashMaxLen {
+			b.truncate(b.hashMaxLen)
+		}
+		b.Unlock()
 	}
+}
+
+type EntrySlash32 struct {
+	netmask string
+	credit  float64
+}
+
+func (e EntrySlash32) Hash() string {
+	hasher := md5.New()
+	io.WriteString(hasher, e.netmask)
+	return fmt.Sprintf("%x", hasher.Sum(nil))
+}
+
+func (e EntrySlash32) Credit() float64 {
+	return e.credit
+}
+
+func (e EntrySlash32) String() string {
+	return fmt.Sprintf("%s,%.3f", e.netmask, e.credit)
+}
+
+func (e EntrySlash32) Title() string {
+	return e.netmask
 }

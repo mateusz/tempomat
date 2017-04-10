@@ -4,31 +4,30 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/mateusz/tempomat/lib/config"
 )
 
 type Bucket struct {
 	lowCreditThreshold float64
 	rate               float64
 	hashMaxLen         int
-	mutex              sync.RWMutex
+	sync.RWMutex
 }
 
-func (b *Bucket) SetLowCreditThreshold(lowCreditThreshold float64) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	b.lowCreditThreshold = lowCreditThreshold
+func (b *Bucket) SetConfig(c config.Config) {
+	b.Lock()
+	defer b.Unlock()
+
+	b.lowCreditThreshold = c.LowCreditThreshold
+	b.hashMaxLen = c.HashMaxLen
 }
 
-func (b *Bucket) SetRate(rate float64) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	b.rate = rate
-}
+func (b *Bucket) Threshold() float64 {
+	b.RLock()
+	defer b.RUnlock()
 
-func (b *Bucket) SetHashMaxLen(hashMaxLen int) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	b.hashMaxLen = hashMaxLen
+	return b.lowCreditThreshold
 }
 
 func getIPAdressFromHeaders(r *http.Request, m map[string]bool) string {
