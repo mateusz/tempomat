@@ -14,6 +14,7 @@ type Config struct {
 	ListenPort         int             `json:"listenPort"`
 	LogFile            string          `json:"logFile"`
 	StatsFile          string          `json:"statsFile"`
+	SyslogStats        bool            `json:"syslogStats"`
 	Graphite           string          `json:"graphite"`
 	GraphitePrefix     string          `json:"graphitePrefix"`
 	TrustedProxies     string          `json:"trustedProxies"`
@@ -34,6 +35,7 @@ func New() Config {
 		ListenPort:         8888,
 		LogFile:            "",
 		StatsFile:          "",
+		SyslogStats:        false,
 		Graphite:           "",
 		GraphitePrefix:     "",
 		TrustedProxies:     "",
@@ -55,6 +57,7 @@ func (conf *Config) Print() {
 		listenPortHelp         = "Local HTTP listen port"
 		logFileHelp            = "Log file"
 		statsFileHelp          = "Stats file"
+		syslogStatsHelp        = "Write stats to syslog. Takes precedence over statsFile"
 		graphiteHelp           = "Graphite server, e.g. 'tcp://localhost:2003'"
 		graphitePrefixHelp     = "Graphite prefix, exclude final dot, e.g. 'chaos.schmall.prod'"
 		trustedProxiesHelp     = "Trusted proxy ips"
@@ -72,6 +75,7 @@ func (conf *Config) Print() {
 	fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
+	fmt.Fprintf(tw, "%t\t - %s\f", conf.SyslogStats, syslogStatsHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.Graphite, graphiteHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.GraphitePrefix, graphitePrefixHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.TrustedProxies, trustedProxiesHelp)

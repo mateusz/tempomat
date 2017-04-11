@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log/syslog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -78,7 +79,13 @@ func init() {
 	statsLog.Out = ioutil.Discard
 	statsLog.Level = log.InfoLevel
 	statsLog.Formatter = &StatsFormatter{}
-	if conf.StatsFile != "" {
+	if conf.SyslogStats {
+		var err error
+		statsLog.Out, err = syslog.New(syslog.LOG_INFO, "tempomat-stats")
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else if conf.StatsFile != "" {
 		var err error
 		statsLog.Out, err = os.OpenFile(conf.StatsFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
@@ -166,7 +173,13 @@ func statsLogger() {
 	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
 		for _, b := range buckets {
-			Dump(b, statsLog)
+
+			for _, e := range b.Entries() {
+				if e.Credit() < b.Threshold() {
+					statsLog.Info(fmt.Sprintf("%s,'%s',%f", b, e.Title(), e.Credit()))
+				}
+			}
+
 			sendMetric(b.String(), fmt.Sprintf("%d", CountUnderThreshold(b)))
 
 		}
@@ -247,12 +260,4 @@ func CountUnderThreshold(b bucket.Bucketable) int {
 		}
 	}
 	return count
-}
-
-func Dump(b bucket.Bucketable, l *log.Logger) {
-	for k, e := range b.Entries() {
-		if e.Credit() < b.Threshold() {
-			l.Info(fmt.Sprintf("%s,%s,'%s'", b, k, e))
-		}
-	}
 }
