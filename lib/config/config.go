@@ -12,7 +12,6 @@ type Config struct {
 	LowCreditThreshold float64         `json:"lowCreditThreshold"`
 	Backend            string          `json:"backend"`
 	ListenPort         int             `json:"listenPort"`
-	LogFile            string          `json:"logFile"`
 	StatsFile          string          `json:"statsFile"`
 	SyslogStats        bool            `json:"syslogStats"`
 	Graphite           string          `json:"graphite"`
@@ -33,7 +32,6 @@ func New() Config {
 		LowCreditThreshold: 0.1,
 		Backend:            "http://localhost:80",
 		ListenPort:         8888,
-		LogFile:            "",
 		StatsFile:          "",
 		SyslogStats:        false,
 		Graphite:           "",
@@ -55,7 +53,6 @@ func (conf *Config) Print() {
 		lowCreditThresholdHelp = "Low credit threshold"
 		backendHelp            = "Backend URI"
 		listenPortHelp         = "Local HTTP listen port"
-		logFileHelp            = "Log file"
 		statsFileHelp          = "Stats file"
 		syslogStatsHelp        = "Write stats to syslog. Takes precedence over statsFile"
 		graphiteHelp           = "Graphite server, e.g. 'tcp://localhost:2003'"
@@ -73,7 +70,6 @@ func (conf *Config) Print() {
 	fmt.Fprintf(tw, "%d%%\t - %s\f", int(conf.LowCreditThreshold*100), lowCreditThresholdHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.Backend, backendHelp)
 	fmt.Fprintf(tw, "%d\t - %s\f", conf.ListenPort, listenPortHelp)
-	fmt.Fprintf(tw, "%s\t - %s\f", conf.LogFile, logFileHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.StatsFile, statsFileHelp)
 	fmt.Fprintf(tw, "%t\t - %s\f", conf.SyslogStats, syslogStatsHelp)
 	fmt.Fprintf(tw, "%s\t - %s\f", conf.Graphite, graphiteHelp)

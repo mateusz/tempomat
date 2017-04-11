@@ -21,7 +21,6 @@ import (
 	"github.com/mateusz/tempomat/api"
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/mateusz/tempomat/lib/config"
-	"github.com/rifflock/lfshook"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/load"
 )
@@ -62,17 +61,6 @@ func init() {
 	proxies := strings.Split(conf.TrustedProxies, ",")
 	for _, proxy := range proxies {
 		conf.TrustedProxiesMap[proxy] = true
-	}
-
-	if conf.LogFile != "" {
-		log.AddHook(lfshook.NewHook(lfshook.PathMap{
-			log.PanicLevel: conf.LogFile,
-			log.FatalLevel: conf.LogFile,
-			log.ErrorLevel: conf.LogFile,
-			log.WarnLevel:  conf.LogFile,
-			log.InfoLevel:  conf.LogFile,
-			log.DebugLevel: conf.LogFile,
-		}))
 	}
 
 	statsLog = log.New()
