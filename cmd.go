@@ -81,7 +81,7 @@ func init() {
 	statsLog.Formatter = &StatsFormatter{}
 	if conf.SyslogStats {
 		var err error
-		statsLog.Out, err = syslog.New(syslog.LOG_INFO, "tempomat-stats")
+		statsLog.Out, err = syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "tempomat-stats")
 		if err != nil {
 			log.Fatal(err)
 		}
