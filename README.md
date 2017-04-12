@@ -99,16 +99,16 @@ Create config file in `/etc/tempomat.json`:
 	"lowCreditThreshold": 0.1,
 	"backend": "http://localhost:80",
 	"listenPort": 8888,
-	"logFile": "tempomat-log.log",
 	"statsFile": "tempomat-stats.log",
+	"syslogStats": true,
+	"graphite": "localhost:2003",
+	"graphitePrefix": "some.place.in.graphite",
 	"trustedProxies": "127.0.0.1",
 	"slash32Share": 0.1,
 	"slash24Share": 0.25,
 	"slash16Share": 0.5,
 	"userAgentShare": 0.1,
-	"hashMaxLen": 100,
-	"graphite": "localhost:2003",
-	"graphitePrefix: "some.place.in.graphite"
+	"hashMaxLen": 100
 }
 ```
 
@@ -116,7 +116,6 @@ Run server:
 
 ```
 go build github.com/mateusz/tempomat
-rm tempomat-*.log
 ./tempomat
 ```
 
