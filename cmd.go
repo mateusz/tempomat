@@ -81,13 +81,6 @@ func init() {
 		}
 	}
 
-	if conf.Debug {
-		log.SetLevel(log.DebugLevel)
-		statsLog.Level = log.DebugLevel
-
-		conf.Print()
-	}
-
 	cpuCountInt, err := cpu.Counts(true)
 	if err != nil {
 		log.Fatal(err)
@@ -98,11 +91,24 @@ func init() {
 		if conf.GraphitePrefix == "" {
 			log.Fatal("Configuration failure: 'graphitePrefix' is required if 'graphite' is specified")
 		}
-		var err error
-		conf.GraphiteURL, err = url.Parse(conf.Graphite)
-		if err != nil {
-			log.Fatal(err)
+		hostname, errHostname := os.Hostname()
+		if errHostname != nil {
+			log.Fatal(errHostname)
 		}
+		conf.GraphitePrefix = strings.Replace(conf.GraphitePrefix, "{hostname}", hostname, -1)
+
+		var errParse error
+		conf.GraphiteURL, errParse = url.Parse(conf.Graphite)
+		if errParse != nil {
+			log.Fatal(errParse)
+		}
+	}
+
+	if conf.Debug {
+		log.SetLevel(log.DebugLevel)
+		statsLog.Level = log.DebugLevel
+
+		conf.Print()
 	}
 
 	buckets = append(buckets, bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.TrustedProxiesMap, 32, conf.HashMaxLen))

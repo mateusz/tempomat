@@ -102,7 +102,7 @@ Create config file in `/etc/tempomat.json`:
 	"statsFile": "tempomat-stats.log",
 	"syslogStats": true,
 	"graphite": "localhost:2003",
-	"graphitePrefix": "some.place.in.graphite",
+	"graphitePrefix": "some.place.prepend.{hostname}",
 	"trustedProxies": "127.0.0.1",
 	"slash32Share": 0.1,
 	"slash24Share": 0.25,
