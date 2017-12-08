@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log/syslog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -17,20 +16,23 @@ import (
 
 	"net/rpc"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/mateusz/tempomat/api"
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/mateusz/tempomat/lib/config"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/load"
+	"golang.org/x/time/rate"
+	"log"
 )
 
 var conf config.Config
 
 var buckets []bucket.Bucketable
 
-var statsLog *log.Logger
 var cpuCount float64
+
+var stdoutLog *log.Logger
+var stderrLog *log.Logger
 
 func utilisation() (float64, error) {
 	// beware that the variable name load collides with the package load
@@ -43,19 +45,19 @@ func utilisation() (float64, error) {
 }
 
 func init() {
-	log.SetOutput(os.Stderr)
-	log.SetLevel(log.WarnLevel)
+	stdoutLog = log.New(os.Stdout, "", 0)
+	stderrLog = log.New(os.Stderr, "", 0)
 
 	conf = config.New()
 
 	jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
 	if err != nil {
-		log.Error(err)
-		log.Fatal("Refusing to start on unreadable config file.")
+		stderrLog.Printf("Unreadable config file: %s\n", err)
+		os.Exit(1)
 	}
 	if err = json.Unmarshal(jsonStr, &conf); err != nil {
-		log.Error(err)
-		log.Fatal("Refusing to start on unparseable config file.")
+		stderrLog.Printf("Unparseable config file: %s\n", err)
+		os.Exit(1)
 	}
 
 	proxies := strings.Split(conf.TrustedProxies, ",")
@@ -63,128 +65,138 @@ func init() {
 		conf.TrustedProxiesMap[proxy] = true
 	}
 
-	statsLog = log.New()
-	statsLog.Out = ioutil.Discard
-	statsLog.Level = log.InfoLevel
-	statsLog.Formatter = &StatsFormatter{}
-	if conf.SyslogStats {
-		var err error
-		statsLog.Out, err = syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "tempomat-stats")
-		if err != nil {
-			log.Fatal(err)
-		}
-	} else if conf.StatsFile != "" {
-		var err error
-		statsLog.Out, err = os.OpenFile(conf.StatsFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
+	// TODO allow overriding, or maybe just switch "Shares" to absolute values? (i.e. 1.0cpu instead of 12.5%)
 	cpuCountInt, err := cpu.Counts(true)
 	if err != nil {
-		log.Fatal(err)
+		stderrLog.Printf("%s\n", err)
+		os.Exit(1)
 	}
 	cpuCount = float64(cpuCountInt)
 
 	if conf.Graphite != "" {
 		if conf.GraphitePrefix == "" {
-			log.Fatal("Configuration failure: 'graphitePrefix' is required if 'graphite' is specified")
+			stderrLog.Print("Configuration failure: 'graphitePrefix' is required if 'graphite' is specified\n")
+			os.Exit(1)
 		}
 		hostname, errHostname := os.Hostname()
 		if errHostname != nil {
-			log.Fatal(errHostname)
+			stderrLog.Printf("%s\n", errHostname)
+			os.Exit(1)
 		}
 		conf.GraphitePrefix = strings.Replace(conf.GraphitePrefix, "{hostname}", hostname, -1)
 
 		var errParse error
 		conf.GraphiteURL, errParse = url.Parse(conf.Graphite)
 		if errParse != nil {
-			log.Fatal(errParse)
+			stderrLog.Printf("%s\n", errParse)
+			os.Exit(1)
 		}
 	}
 
 	if conf.Debug {
-		log.SetLevel(log.DebugLevel)
-		statsLog.Level = log.DebugLevel
-
 		conf.Print()
 	}
 
-	buckets = append(buckets, bucket.NewSlash32(cpuCount*conf.Slash32Share, conf.TrustedProxiesMap, 32, conf.HashMaxLen))
-	buckets = append(buckets, bucket.NewSlash32(cpuCount*conf.Slash24Share, conf.TrustedProxiesMap, 24, conf.HashMaxLen))
-	buckets = append(buckets, bucket.NewSlash32(cpuCount*conf.Slash16Share, conf.TrustedProxiesMap, 16, conf.HashMaxLen))
-	buckets = append(buckets, bucket.NewUserAgent(cpuCount*conf.UserAgentShare, conf.HashMaxLen))
+	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 32))
+	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 24))
+	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 16))
+	buckets = append(buckets, bucket.NewUserAgent(conf, cpuCount))
+}
+
+func statsLogger() {
+	ticker := time.NewTicker(time.Second)
+	for range ticker.C {
+		for _, b := range buckets {
+			for _, e := range b.Entries() {
+				if e.AvgWait() > b.DelayThreshold() {
+					stdoutLog.Printf("%s,'%s',%.2f", b, e.Title(), e.AvgWait().Seconds())
+				}
+			}
+			sendMetric(b.String(), fmt.Sprintf("%d", CountOverThreshold(b)))
+		}
+	}
 }
 
 func sendMetric(metric string, value string) {
 	dialer, err := net.Dial("tcp", conf.GraphiteURL.Host)
 	if err != nil {
-		log.Warn(fmt.Sprintf("Failed to connect to graphite server: %s", err))
+		stderrLog.Printf("Failed to connect to graphite server: %s", err)
 		return
 	}
 
 	_, err = dialer.Write([]byte(fmt.Sprintf("%s.%s %s %d\n", conf.GraphitePrefix, metric, value, time.Now().Unix())))
 	if err != nil {
-		log.Warn(fmt.Sprintf("Failed to write to graphite server: %s", err))
+		stderrLog.Printf("Failed to write to graphite server: %s", err)
 	}
 	if err = dialer.Close(); err != nil {
-		log.Warn(fmt.Sprintf("Failed to Close() connection to graphite server: %s", err))
+		stderrLog.Printf("Failed to Close() connection to graphite server: %s", err)
 	}
 }
 
 func middleware(proxy http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TODO pre-check the token bucket before forwarding the request. Can we fail early?
 		start := time.Now()
 		proxy.ServeHTTP(w, r)
+		// TODO I'm not sure if this expresses the time from beginning till the end. Reqs
+		// that take 3s to complete (because of load) register as 0.7 here...
 		reqTime := time.Since(start)
 
 		u, err := utilisation()
 		if err != nil {
-			log.Warn(fmt.Sprintf("%s, assuming utilisation=1.0", err))
+			stderrLog.Printf("%s, assuming utilisation=1.0", err)
 			u = 1.0
 		}
 
 		// Cost is expressed in the amount of compute seconds consumed.
-		// It's scaled down by load average if the CPU is 100% saturated to take CPU contention into account.
-		cost := float64(reqTime) / 1e9
+		// It's scaled down by load average to certain degree if the CPU is 100% saturated to take CPU contention into account.
+		cost := float64(reqTime) / float64(time.Second)
+		// TODO maybe get rid of scaling - so this can be deployed on a different server. It seems to introduce instability anyway.
 		if u > 1.0 {
-			cost = cost / u
+			cost = cost / (0.5*u)
 		}
+		fmt.Printf("%.2f\n", cost)
 
+		var maxDelay time.Duration
 		for _, b := range buckets {
 			// be very very careful of not reading the request.Body unless copying it before.
 			// The Body is a io.ReadClose so if you read it, it will be empty (closed) for other calls to it,
 			// @see https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
 			// I'm not sure how this works with the reverseProxy functionality
 			// wouldn't it be great if we could mark stuff as immutable.
-			b.Register(r, cost)
+			rsv := b.ReserveN(r, start, cost)
+			if !rsv.OK() {
+				w.WriteHeader(503)
+				// Hold the client up for a bit as a penalty
+				time.Sleep(60 * time.Second)
+				// TODO How often does this trigger?
+				fmt.Print("DROP\n")
+				return
+			}
+			bucketDelay := rsv.Delay();
+			if (bucketDelay>maxDelay) {
+				maxDelay = bucketDelay
+			}
+		}
+
+		if maxDelay==rate.InfDuration {
+			w.WriteHeader(503)
+			// Hold the client up for a bit as a penalty
+			// TODO How often does this trigger?
+			fmt.Print("DROP\n")
+			time.Sleep(60 * time.Second)
+		} else {
+			time.Sleep(maxDelay)
 		}
 	})
-}
-
-func statsLogger() {
-	ticker := time.NewTicker(time.Minute)
-	for range ticker.C {
-		for _, b := range buckets {
-
-			for _, e := range b.Entries() {
-				if e.Credit() < b.Threshold() {
-					statsLog.Info(fmt.Sprintf("%s,'%s',%f", b, e.Title(), e.Credit()))
-				}
-			}
-
-			sendMetric(b.String(), fmt.Sprintf("%d", CountUnderThreshold(b)))
-
-		}
-	}
 }
 
 func listen() {
 	// beware that url is colliding with the imported package url
 	addr, err := url.Parse(conf.Backend)
 	if err != nil {
-		log.Fatal(err)
+		stderrLog.Printf("%s\n", err)
+		os.Exit(1)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(addr)
 	handler := middleware(proxy)
@@ -196,25 +208,26 @@ func sighupHandler() {
 	signal.Notify(c, syscall.SIGHUP)
 	for {
 		<-c
-		log.Warn("SIGHUP received, reloading config")
+		stdoutLog.Print("SIGHUP received, reloading config\n")
 
 		newConfig := config.New()
 		jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
 		if err != nil {
-			log.Error(err)
-			log.Error("Refusing to reload on unreadable config file.")
+			stderrLog.Printf("Unreadable config file: %s\n", err)
 		}
 		if err = json.Unmarshal(jsonStr, &newConfig); err != nil {
-			log.Error(err)
-			log.Error("Refusing to reload on unparseable config file.")
+			stderrLog.Printf("Unparseable config file: %s\n", err)
+			return
 		}
 
 		// These changes must all be secured for concurrent access.
 		// For example changing Debug is not safe, because it results in data race.
+		// TODO these won't work without reprovisioning the buckets
 		conf.UserAgentShare = newConfig.UserAgentShare
 		conf.Slash32Share = newConfig.Slash32Share
 		conf.Slash24Share = newConfig.Slash24Share
 		conf.Slash16Share = newConfig.Slash16Share
+		conf.DelayThresholdSec = newConfig.DelayThresholdSec
 
 		for _, b := range buckets {
 			b.SetConfig(conf)
@@ -228,7 +241,7 @@ func sighupHandler() {
 
 func main() {
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
+		stdoutLog.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
 	go sighupHandler()
@@ -237,19 +250,20 @@ func main() {
 	// @todo: need to figure this out
 	rpc.Register(api.NewTempomatAPI(buckets))
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":29999")
-	if e != nil {
-		log.Fatal("Unable to set up RPC listener:", e)
+	l, err := net.Listen("tcp", ":29999")
+	if err != nil {
+		stderrLog.Printf("Unable to set up RPC listener: %s\n", err)
+		os.Exit(1)
 	}
 	go http.Serve(l, nil)
 
 	listen()
 }
 
-func CountUnderThreshold(b bucket.Bucketable) int {
+func CountOverThreshold(b bucket.Bucketable) int {
 	var count int
 	for _, e := range b.Entries() {
-		if e.Credit() < b.Threshold() {
+		if e.AvgWait() > b.DelayThreshold() {
 			count++
 		}
 	}

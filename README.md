@@ -96,7 +96,7 @@ Create config file in `/etc/tempomat.json`:
 ```json
 {
 	"debug": false,
-	"lowCreditThreshold": 0.1,
+	"delayThreshold": 0.1,
 	"backend": "http://localhost:80",
 	"listenPort": 8888,
 	"statsFile": "tempomat-stats.log",
