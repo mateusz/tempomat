@@ -9,6 +9,7 @@ import (
 
 	"github.com/containous/flaeg"
 	"github.com/mateusz/tempomat/api"
+	"time"
 )
 
 type Configuration struct {
@@ -43,20 +44,39 @@ func main() {
 		log.Fatal("Failed to dial server:", err)
 	}
 
-	var reply api.DumpList
-	args := api.DumpArgs{
-		BucketName: conf.Bucket,
-	}
-	err = client.Call("TempomatAPI.Dump", &args, &reply)
-	if err != nil {
-		log.Fatal("Call error:", err)
+	bucketNames := []string{"Slash32", "Slash24", "Slash16", "UserAgent"}
+	dumps := make([]api.DumpList, len(bucketNames))
+
+	for i, b := range bucketNames {
+		args := api.DumpArgs{
+			BucketName: b,
+		}
+		err = client.Call("TempomatAPI.Dump", &args, &dumps[i])
+		if err != nil {
+			log.Fatal("Call error:", err)
+		}
+
+		sort.Sort(api.AvgWaitSortDumpList(dumps[i]))
 	}
 
-	sort.Sort(api.CreditSortDumpList(reply))
-
-	fmt.Printf(conf.Bucket + "\n")
-	fmt.Printf("=============\n")
-	for _, v := range reply {
-		fmt.Printf("%.3f\t%s\n", v.Credit, v.Title)
+	// Headers
+	for _, b := range bucketNames {
+		fmt.Printf("|%s\t\t\t", b)
 	}
+	fmt.Print("\n")
+	for i:=0; ; i++ {
+		has := false
+		for _, d := range dumps {
+			if i<len(d) {
+				has = true
+				fmt.Printf("|%.2f\t%.0f\t%s\t", d[i].AvgWait.Seconds(), time.Now().Sub(d[i].LastUsed).Seconds(), d[i].Title)
+			}
+		}
+		fmt.Print("\n")
+
+		if !has {
+			break
+		}
+	}
+
 }

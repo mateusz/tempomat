@@ -1,6 +1,9 @@
 package api
 
-import "github.com/mateusz/tempomat/bucket"
+import (
+	"github.com/mateusz/tempomat/bucket"
+	"time"
+)
 
 type TempomatAPI struct {
 	buckets []bucket.Bucketable
@@ -19,15 +22,16 @@ type DumpArgs struct {
 type DumpEntry struct {
 	Hash   string
 	Title  string
-	Credit float64
+	LastUsed time.Time
+	AvgWait time.Duration
 }
 
 type DumpList []DumpEntry
-type CreditSortDumpList []DumpEntry
+type AvgWaitSortDumpList []DumpEntry
 
-func (l CreditSortDumpList) Len() int           { return len(l) }
-func (l CreditSortDumpList) Less(i, j int) bool { return l[i].Credit < l[j].Credit }
-func (l CreditSortDumpList) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+func (l AvgWaitSortDumpList) Len() int           { return len(l) }
+func (l AvgWaitSortDumpList) Less(i, j int) bool { return l[i].AvgWait>l[j].AvgWait }
+func (l AvgWaitSortDumpList) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
 
 func (a *TempomatAPI) Dump(args *DumpArgs, reply *DumpList) error {
 	for _, b := range a.buckets {
@@ -45,7 +49,8 @@ func repack(b bucket.Bucketable) DumpList {
 		l[i] = DumpEntry{
 			Hash:   e[i].Hash(),
 			Title:  e[i].Title(),
-			Credit: e[i].Credit(),
+			LastUsed: e[i].LastUsed(),
+			AvgWait: e[i].AvgWait(),
 		}
 	}
 	return l

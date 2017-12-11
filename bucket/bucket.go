@@ -6,12 +6,14 @@ import (
 	"sync"
 
 	"github.com/mateusz/tempomat/lib/config"
+	"time"
 )
 
 type Bucket struct {
-	lowCreditThreshold float64
-	rate               float64
-	hashMaxLen         int
+	delayThreshold time.Duration
+	cpuCount	float64
+	rate           float64
+	hashMaxLen     int
 	sync.RWMutex
 }
 
@@ -19,15 +21,15 @@ func (b *Bucket) SetConfig(c config.Config) {
 	b.Lock()
 	defer b.Unlock()
 
-	b.lowCreditThreshold = c.LowCreditThreshold
+	b.delayThreshold = time.Duration(c.DelayThresholdSec*1000) * time.Millisecond
 	b.hashMaxLen = c.HashMaxLen
 }
 
-func (b *Bucket) Threshold() float64 {
+func (b *Bucket) DelayThreshold() time.Duration {
 	b.RLock()
 	defer b.RUnlock()
 
-	return b.lowCreditThreshold
+	return b.delayThreshold
 }
 
 func getIPAdressFromHeaders(r *http.Request, m map[string]bool) string {

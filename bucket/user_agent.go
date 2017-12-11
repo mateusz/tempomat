@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	"golang.org/x/time/rate"
 	"github.com/mateusz/tempomat/lib/config"
 )
 
@@ -17,21 +17,21 @@ type UserAgent struct {
 	hash map[string]EntryUserAgent
 }
 
-func NewUserAgent(rate float64, hashMaxLen int) *UserAgent {
+func NewUserAgent(c config.Config, cpuCount float64) *UserAgent {
 	b := &UserAgent{
 		Bucket: Bucket{
-			rate:       rate,
-			hashMaxLen: hashMaxLen,
+			cpuCount:       cpuCount,
 		},
 		hash: make(map[string]EntryUserAgent),
 	}
+	b.SetConfig(c)
 	go b.ticker()
 	return b
 }
 
 func (b *UserAgent) SetConfig(c config.Config) {
 	b.Lock()
-	b.rate = c.UserAgentShare
+	b.rate = c.UserAgentShare * b.cpuCount
 	b.Unlock()
 
 	b.Bucket.SetConfig(c)
@@ -54,65 +54,73 @@ func (b *UserAgent) Entries() Entries {
 	return l
 }
 
-func (b *UserAgent) Register(r *http.Request, cost float64) {
+func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) *rate.Reservation {
 	ua := r.UserAgent()
 
 	b.Lock()
+	defer b.Unlock()
 	entry := EntryUserAgent{
 		userAgent: ua,
-		credit:    b.rate*10.0 - cost,
 	}
 	key := entry.Hash()
 
-	// subtract the credits since this it's already in ther
-	if c, ok := b.hash[key]; ok {
-		c.credit -= cost
-		b.hash[key] = c
-		// new entry, give it full credits - 1
+	if _, ok := b.hash[key]; ok {
+		entry = b.hash[key];
 	} else {
+		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 10 * 1000)
 		b.hash[key] = entry
 	}
 
-	log.Info(fmt.Sprintf("UserAgent: %s, %f billed to '%s', total is %f", r.URL, cost, ua, b.hash[key].credit))
-	b.Unlock()
+
+	rsv := entry.limiter.ReserveN(start, int(qty * 1000))
+
+	entry.lastUsed = time.Now()
+	entry.avgWait -= entry.avgWait/10
+	entry.avgWait += rsv.Delay()/10
+	b.hash[key] = entry
+
+	return rsv
 }
 
 // Not concurrency safe.
 func (b *UserAgent) truncate(truncatedSize int) {
-	newHash := make(map[string]EntryUserAgent)
-
 	entries := b.Entries()
-	sort.Sort(CreditSortEntries(entries))
-	for i := 0; i < truncatedSize; i++ {
-		newHash[entries[i].Hash()] = entries[i].(EntryUserAgent)
+
+	sort.Sort(LastUsedSortEntries(entries))
+	purged := make(Entries, 0, len(entries))
+	for i := 0; i < len(entries); i++ {
+		if time.Now().Sub(entries[i].LastUsed())<60*time.Second {
+			purged = append(purged, entries[i])
+		}
 	}
+
+	sort.Sort(AvgWaitSortEntries(purged))
+	newHash := make(map[string]EntryUserAgent)
+	for i := 0; i < truncatedSize && i<len(purged); i++ {
+		newHash[purged[i].Hash()] = purged[i].(EntryUserAgent)
+	}
+
+	// TODO this will overwrite recently added entries
+	b.Lock()
+	defer b.Unlock()
 	b.hash = newHash
 }
 
 func (b *UserAgent) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
-		b.Lock()
-		for k, c := range b.hash {
-			// Remove entries that are at their max credits
-			if c.credit+b.rate > b.rate*10.0 {
-				delete(b.hash, k)
-			} else {
-				c.credit += b.rate
-				b.hash[k] = c
-			}
-		}
 		// Truncate some entries to not blow out the memory
 		if len(b.hash) > b.hashMaxLen {
 			b.truncate(b.hashMaxLen)
 		}
-		b.Unlock()
 	}
 }
 
 type EntryUserAgent struct {
 	userAgent string
-	credit    float64
+	lastUsed time.Time
+	avgWait time.Duration
+	limiter *rate.Limiter
 }
 
 func (e EntryUserAgent) Hash() string {
@@ -121,12 +129,16 @@ func (e EntryUserAgent) Hash() string {
 	return fmt.Sprintf("%x", hasher.Sum(nil))
 }
 
-func (e EntryUserAgent) Credit() float64 {
-	return e.credit
+func (e EntryUserAgent) LastUsed() time.Time {
+	return e.lastUsed
+}
+
+func (e EntryUserAgent) AvgWait() time.Duration {
+	return e.avgWait
 }
 
 func (e EntryUserAgent) String() string {
-	return fmt.Sprintf("%s,%.3f", e.userAgent, e.credit)
+	return fmt.Sprintf("%s, used %d ago", e.userAgent, time.Now().Sub(e.lastUsed).Seconds())
 }
 
 func (e EntryUserAgent) Title() string {
