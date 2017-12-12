@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -20,9 +18,15 @@ import (
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/mateusz/tempomat/lib/config"
 	"log"
+	"sync"
 )
 
+// TODO
+// * test for lockup: set cpuCount to 0.1 (very low), wait until a large delay shows up - then no request
+// * will get responded to... actually it's changing the limit - seems to blow the buckets up :-)
+
 var conf config.Config
+var confMutex sync.RWMutex
 
 var buckets []bucket.Bucketable
 
@@ -32,6 +36,8 @@ var stderrLog *log.Logger
 func init() {
 	stdoutLog = log.New(os.Stdout, "", 0)
 	stderrLog = log.New(os.Stderr, "", 0)
+
+	confMutex = sync.RWMutex{}
 
 	var err error
 	conf, err = config.NewConfig()
@@ -85,17 +91,24 @@ func statsLogger() {
 }
 
 func sendMetric(metric string, value string) {
+	confMutex.RLock()
 	if conf.Graphite=="" {
+		confMutex.RUnlock()
 		return
 	}
 
-	dialer, err := net.Dial("tcp", conf.GraphiteURL.Host)
+	host := conf.GraphiteURL.Host
+	prefix := conf.GraphitePrefix
+	confMutex.RUnlock()
+
+
+	dialer, err := net.Dial("tcp", host)
 	if err != nil {
 		stderrLog.Printf("Failed to connect to graphite server: %s", err)
 		return
 	}
 
-	_, err = dialer.Write([]byte(fmt.Sprintf("%s.%s %s %d\n", conf.GraphitePrefix, metric, value, time.Now().Unix())))
+	_, err = dialer.Write([]byte(fmt.Sprintf("%s.%s %s %d\n", prefix, metric, value, time.Now().Unix())))
 	if err != nil {
 		stderrLog.Printf("Failed to write to graphite server: %s", err)
 	}
@@ -151,15 +164,20 @@ func holdCaller(start time.Time, delay time.Duration) {
 }
 
 func listen() {
+	confMutex.RLock()
+	backend := conf.Backend
+	listenPort := conf.ListenPort
+	confMutex.RUnlock()
+
 	// beware that url is colliding with the imported package url
-	addr, err := url.Parse(conf.Backend)
+	addr, err := url.Parse(backend)
 	if err != nil {
 		stderrLog.Printf("%s\n", err)
 		os.Exit(1)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(addr)
 	handler := middleware(proxy)
-	http.ListenAndServe(fmt.Sprintf(":%d", conf.ListenPort), handler)
+	http.ListenAndServe(fmt.Sprintf(":%d", listenPort), handler)
 }
 
 func sighupHandler() {
@@ -171,19 +189,15 @@ func sighupHandler() {
 
 		newConfig, err := config.NewConfig()
 		if err!=nil {
-
-		}
-		jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
-		if err != nil {
-			stderrLog.Printf("Unreadable config file: %s\n", err)
-		}
-		if err = json.Unmarshal(jsonStr, &newConfig); err != nil {
-			stderrLog.Printf("Unparseable config file: %s\n", err)
+			stderrLog.Printf("Unale to reload config: %s\n", err)
 			return
 		}
 
+		confMutex.Lock()
 		conf = newConfig
+		confMutex.Unlock()
 
+		confMutex.RLock()
 		for _, b := range buckets {
 			b.SetConfig(conf)
 		}
@@ -191,6 +205,7 @@ func sighupHandler() {
 		if conf.Debug {
 			conf.Print(stdoutLog)
 		}
+		confMutex.RUnlock()
 	}
 }
 

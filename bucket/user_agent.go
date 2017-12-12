@@ -54,6 +54,16 @@ func (b *UserAgent) Entries() Entries {
 	return l
 }
 
+func (b *UserAgent) entries() Entries {
+	l := make(Entries, len(b.hash))
+	i := 0
+	for _, v := range b.hash {
+		l[i] = v
+		i++
+	}
+	return l
+}
+
 func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (delay time.Duration, ok bool) {
 	ua := r.UserAgent()
 
@@ -80,9 +90,15 @@ func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (del
 		delay = 120 * time.Second
 	}
 
+	var delayRemaining time.Duration
+	elapsed := time.Now().Sub(start)
+	if elapsed<=delay {
+		delayRemaining = delay-elapsed
+	}
+
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
-	entry.avgWait += delay /10
+	entry.avgWait += delayRemaining /10
 
 	b.hash[key] = entry
 
@@ -91,7 +107,7 @@ func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (del
 
 // Not concurrency safe.
 func (b *UserAgent) truncate(truncatedSize int) {
-	entries := b.Entries()
+	entries := b.entries()
 
 	sort.Sort(LastUsedSortEntries(entries))
 	purged := make(Entries, 0, len(entries))
@@ -108,18 +124,17 @@ func (b *UserAgent) truncate(truncatedSize int) {
 	}
 
 	// TODO this will overwrite recently added entries
-	b.Lock()
-	defer b.Unlock()
 	b.hash = newHash
 }
 
 func (b *UserAgent) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
-		// Truncate some entries to not blow out the memory
+		b.Lock()
 		if len(b.hash) > b.hashMaxLen {
 			b.truncate(b.hashMaxLen)
 		}
+		b.Unlock()
 	}
 }
 

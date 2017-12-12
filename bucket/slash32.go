@@ -66,6 +66,10 @@ func (b *Slash32) Entries() Entries {
 	b.RLock()
 	defer b.RUnlock()
 
+	return b.entries()
+}
+
+func (b *Slash32) entries() Entries {
 	l := make(Entries, len(b.hash))
 	i := 0
 	for _, v := range b.hash {
@@ -116,9 +120,15 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay
 		delay = 120 * time.Second
 	}
 
+	var delayRemaining time.Duration
+	elapsed := time.Now().Sub(start)
+	if elapsed<=delay {
+		delayRemaining = delay-elapsed
+	}
+
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
-	entry.avgWait += delay /10
+	entry.avgWait += delayRemaining / 10
 
 	b.hash[key] = entry
 
@@ -127,7 +137,7 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay
 
 // Not concurrency safe.
 func (b *Slash32) truncate(truncatedSize int) {
-	entries := b.Entries()
+	entries := b.entries()
 
 	sort.Sort(LastUsedSortEntries(entries))
 	purged := make(Entries, 0, len(entries))
@@ -144,18 +154,17 @@ func (b *Slash32) truncate(truncatedSize int) {
 	}
 
 	// TODO this will overwrite recently added entries
-	b.Lock()
-	defer b.Unlock()
 	b.hash = newHash
 }
 
 func (b *Slash32) ticker() {
 	ticker := time.NewTicker(time.Second)
 	for range ticker.C {
-		// Truncate some entries to not blow out the memory
+		b.Lock()
 		if len(b.hash) > b.hashMaxLen {
 			b.truncate(b.hashMaxLen)
 		}
+		b.Unlock()
 	}
 }
 
