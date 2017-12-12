@@ -17,11 +17,8 @@ type UserAgent struct {
 	hash map[string]EntryUserAgent
 }
 
-func NewUserAgent(c config.Config, cpuCount float64) *UserAgent {
+func NewUserAgent(c config.Config) *UserAgent {
 	b := &UserAgent{
-		Bucket: Bucket{
-			cpuCount:       cpuCount,
-		},
 		hash: make(map[string]EntryUserAgent),
 	}
 	b.SetConfig(c)
@@ -31,7 +28,10 @@ func NewUserAgent(c config.Config, cpuCount float64) *UserAgent {
 
 func (b *UserAgent) SetConfig(c config.Config) {
 	b.Lock()
-	b.rate = c.UserAgentShare * b.cpuCount
+	b.rate = c.UserAgentCPUs
+	for _, e := range b.hash {
+		e.limiter.SetLimit(rate.Limit(b.rate))
+	}
 	b.Unlock()
 
 	b.Bucket.SetConfig(c)
@@ -54,7 +54,7 @@ func (b *UserAgent) Entries() Entries {
 	return l
 }
 
-func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) *rate.Reservation {
+func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (delay time.Duration, ok bool) {
 	ua := r.UserAgent()
 
 	b.Lock()
@@ -67,19 +67,26 @@ func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) *rat
 	if _, ok := b.hash[key]; ok {
 		entry = b.hash[key];
 	} else {
-		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 10 * 1000)
+		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 120 * 1000)
 		b.hash[key] = entry
 	}
 
-
 	rsv := entry.limiter.ReserveN(start, int(qty * 1000))
+	if rsv.OK() && rsv.Delay()!=rate.InfDuration {
+		ok = true
+		delay = rsv.Delay()
+	} else {
+		ok = false
+		delay = 120 * time.Second
+	}
 
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
-	entry.avgWait += rsv.Delay()/10
+	entry.avgWait += delay /10
+
 	b.hash[key] = entry
 
-	return rsv
+	return
 }
 
 // Not concurrency safe.

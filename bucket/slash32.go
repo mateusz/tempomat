@@ -21,11 +21,8 @@ type Slash32 struct {
 	netmask           int
 }
 
-func NewSlash32(c config.Config, cpuCount float64, netmask int) *Slash32 {
+func NewSlash32(c config.Config, netmask int) *Slash32 {
 	b := &Slash32{
-		Bucket: Bucket{
-			cpuCount:       cpuCount,
-		},
 		hash:              make(map[string]EntrySlash32),
 		netmask:           netmask,
 	}
@@ -38,13 +35,16 @@ func (b *Slash32) SetConfig(c config.Config) {
 	b.Lock()
 	switch b.netmask {
 	case 32:
-		b.rate = c.Slash32Share * b.cpuCount
+		b.rate = c.Slash32CPUs
 	case 24:
-		b.rate = c.Slash24Share * b.cpuCount
+		b.rate = c.Slash24CPUs
 	case 16:
-		b.rate = c.Slash16Share * b.cpuCount
+		b.rate = c.Slash16CPUs
 	}
 	b.trustedProxiesMap = c.TrustedProxiesMap
+	for _, e := range b.hash {
+		e.limiter.SetLimit(rate.Limit(b.rate))
+	}
 	b.Unlock()
 
 	b.Bucket.SetConfig(c)
@@ -75,7 +75,7 @@ func (b *Slash32) Entries() Entries {
 	return l
 }
 
-func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) *rate.Reservation {
+func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay time.Duration, ok bool) {
 	var err error
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
@@ -104,17 +104,25 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) *rate.
 	if _, ok := b.hash[key]; ok {
 		entry = b.hash[key];
 	} else {
-		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 10 * 1000)
+		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 120 * 1000)
 	}
 
 	rsv := entry.limiter.ReserveN(start, int(qty * 1000))
+	if rsv.OK() && rsv.Delay()!=rate.InfDuration {
+		ok = true
+		delay = rsv.Delay()
+	} else {
+		ok = false
+		delay = 120 * time.Second
+	}
 
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
-	entry.avgWait += rsv.Delay()/10
+	entry.avgWait += delay /10
+
 	b.hash[key] = entry
 
-	return rsv
+	return
 }
 
 // Not concurrency safe.

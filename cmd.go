@@ -19,9 +19,6 @@ import (
 	"github.com/mateusz/tempomat/api"
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/mateusz/tempomat/lib/config"
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/load"
-	"golang.org/x/time/rate"
 	"log"
 )
 
@@ -29,49 +26,19 @@ var conf config.Config
 
 var buckets []bucket.Bucketable
 
-var cpuCount float64
-
 var stdoutLog *log.Logger
 var stderrLog *log.Logger
-
-func utilisation() (float64, error) {
-	// beware that the variable name load collides with the package load
-	load, err := load.Avg()
-	if err != nil {
-		return -1, err
-	}
-
-	return load.Load1 / cpuCount, nil
-}
 
 func init() {
 	stdoutLog = log.New(os.Stdout, "", 0)
 	stderrLog = log.New(os.Stderr, "", 0)
 
-	conf = config.New()
-
-	jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
-	if err != nil {
-		stderrLog.Printf("Unreadable config file: %s\n", err)
-		os.Exit(1)
-	}
-	if err = json.Unmarshal(jsonStr, &conf); err != nil {
-		stderrLog.Printf("Unparseable config file: %s\n", err)
-		os.Exit(1)
-	}
-
-	proxies := strings.Split(conf.TrustedProxies, ",")
-	for _, proxy := range proxies {
-		conf.TrustedProxiesMap[proxy] = true
-	}
-
-	// TODO allow overriding, or maybe just switch "Shares" to absolute values? (i.e. 1.0cpu instead of 12.5%)
-	cpuCountInt, err := cpu.Counts(true)
-	if err != nil {
+	var err error
+	conf, err = config.NewConfig()
+	if err!=nil {
 		stderrLog.Printf("%s\n", err)
 		os.Exit(1)
 	}
-	cpuCount = float64(cpuCountInt)
 
 	if conf.Graphite != "" {
 		if conf.GraphitePrefix == "" {
@@ -94,13 +61,13 @@ func init() {
 	}
 
 	if conf.Debug {
-		conf.Print()
+		conf.Print(stdoutLog)
 	}
 
-	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 32))
-	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 24))
-	buckets = append(buckets, bucket.NewSlash32(conf, cpuCount, 16))
-	buckets = append(buckets, bucket.NewUserAgent(conf, cpuCount))
+	buckets = append(buckets, bucket.NewSlash32(conf, 32))
+	buckets = append(buckets, bucket.NewSlash32(conf, 24))
+	buckets = append(buckets, bucket.NewSlash32(conf, 16))
+	buckets = append(buckets, bucket.NewUserAgent(conf))
 }
 
 func statsLogger() {
@@ -118,6 +85,10 @@ func statsLogger() {
 }
 
 func sendMetric(metric string, value string) {
+	if conf.Graphite=="" {
+		return
+	}
+
 	dialer, err := net.Dial("tcp", conf.GraphiteURL.Host)
 	if err != nil {
 		stderrLog.Printf("Failed to connect to graphite server: %s", err)
@@ -135,60 +106,48 @@ func sendMetric(metric string, value string) {
 
 func middleware(proxy http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// TODO pre-check the token bucket before forwarding the request. Can we fail early?
 		start := time.Now()
 		proxy.ServeHTTP(w, r)
 		// TODO I'm not sure if this expresses the time from beginning till the end. Reqs
 		// that take 3s to complete (because of load) register as 0.7 here...
 		reqTime := time.Since(start)
 
-		u, err := utilisation()
-		if err != nil {
-			stderrLog.Printf("%s, assuming utilisation=1.0", err)
-			u = 1.0
-		}
-
 		// Cost is expressed in the amount of compute seconds consumed.
 		// It's scaled down by load average to certain degree if the CPU is 100% saturated to take CPU contention into account.
 		cost := float64(reqTime) / float64(time.Second)
-		// TODO maybe get rid of scaling - so this can be deployed on a different server. It seems to introduce instability anyway.
-		if u > 1.0 {
-			cost = cost / (0.5*u)
-		}
-		fmt.Printf("%.2f\n", cost)
 
 		var maxDelay time.Duration
+		header := 200
 		for _, b := range buckets {
+			// TODO
 			// be very very careful of not reading the request.Body unless copying it before.
 			// The Body is a io.ReadClose so if you read it, it will be empty (closed) for other calls to it,
 			// @see https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
 			// I'm not sure how this works with the reverseProxy functionality
 			// wouldn't it be great if we could mark stuff as immutable.
-			rsv := b.ReserveN(r, start, cost)
-			if !rsv.OK() {
-				w.WriteHeader(503)
-				// Hold the client up for a bit as a penalty
-				time.Sleep(60 * time.Second)
-				// TODO How often does this trigger?
-				fmt.Print("DROP\n")
-				return
+			bucketDelay, ok := b.ReserveN(r, start, cost)
+			if !ok {
+				header = 503
 			}
-			bucketDelay := rsv.Delay();
 			if (bucketDelay>maxDelay) {
 				maxDelay = bucketDelay
 			}
 		}
 
-		if maxDelay==rate.InfDuration {
-			w.WriteHeader(503)
-			// Hold the client up for a bit as a penalty
-			// TODO How often does this trigger?
-			fmt.Print("DROP\n")
-			time.Sleep(60 * time.Second)
-		} else {
-			time.Sleep(maxDelay)
+		if header!=200 {
+			w.WriteHeader(header)
 		}
+		holdCaller(start, maxDelay)
 	})
+}
+
+func holdCaller(start time.Time, delay time.Duration) {
+	elapsed := time.Now().Sub(start)
+	if elapsed>=delay {
+		return
+	}
+
+	time.Sleep(delay - elapsed)
 }
 
 func listen() {
@@ -210,7 +169,10 @@ func sighupHandler() {
 		<-c
 		stdoutLog.Print("SIGHUP received, reloading config\n")
 
-		newConfig := config.New()
+		newConfig, err := config.NewConfig()
+		if err!=nil {
+
+		}
 		jsonStr, err := ioutil.ReadFile("/etc/tempomat.json")
 		if err != nil {
 			stderrLog.Printf("Unreadable config file: %s\n", err)
@@ -220,21 +182,14 @@ func sighupHandler() {
 			return
 		}
 
-		// These changes must all be secured for concurrent access.
-		// For example changing Debug is not safe, because it results in data race.
-		// TODO these won't work without reprovisioning the buckets
-		conf.UserAgentShare = newConfig.UserAgentShare
-		conf.Slash32Share = newConfig.Slash32Share
-		conf.Slash24Share = newConfig.Slash24Share
-		conf.Slash16Share = newConfig.Slash16Share
-		conf.DelayThresholdSec = newConfig.DelayThresholdSec
+		conf = newConfig
 
 		for _, b := range buckets {
 			b.SetConfig(conf)
 		}
 
 		if conf.Debug {
-			conf.Print()
+			conf.Print(stdoutLog)
 		}
 	}
 }
@@ -247,7 +202,6 @@ func main() {
 	go sighupHandler()
 	go statsLogger()
 
-	// @todo: need to figure this out
 	rpc.Register(api.NewTempomatAPI(buckets))
 	rpc.HandleHTTP()
 	l, err := net.Listen("tcp", ":29999")

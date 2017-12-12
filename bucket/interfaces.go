@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/mateusz/tempomat/lib/config"
-	"golang.org/x/time/rate"
 	"time"
 )
 
@@ -22,7 +21,7 @@ type Entry interface {
 type Bucketable interface {
 	fmt.Stringer
 	Entries() Entries
-	ReserveN(r *http.Request, start time.Time, qty float64) *rate.Reservation
+	ReserveN(r *http.Request, start time.Time, qty float64) (delay time.Duration, ok bool)
 	SetConfig(config.Config)
 	DelayThreshold() time.Duration
 }
