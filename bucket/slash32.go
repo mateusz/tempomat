@@ -162,12 +162,10 @@ func (b *Slash32) truncate(truncatedSize int) {
 }
 
 func (b *Slash32) ticker() {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(time.Minute)
 	for range ticker.C {
 		b.Lock()
-		if len(b.hash) > b.hashMaxLen {
-			b.truncate(b.hashMaxLen)
-		}
+		b.truncate(b.hashMaxLen)
 		b.Unlock()
 	}
 }
