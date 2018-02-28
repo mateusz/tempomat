@@ -15,6 +15,7 @@ type Entry interface {
 	Hash() string
 	LastUsed() time.Time
 	AvgWait() time.Duration
+	AvgSincePrev() time.Duration
 	Title() string
 }
 

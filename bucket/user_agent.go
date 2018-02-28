@@ -29,9 +29,7 @@ func NewUserAgent(c config.Config) *UserAgent {
 func (b *UserAgent) SetConfig(c config.Config) {
 	b.Lock()
 	b.rate = c.UserAgentCPUs
-	for _, e := range b.hash {
-		e.limiter.SetLimit(rate.Limit(b.rate))
-	}
+	b.truncate(0)
 	b.Unlock()
 
 	b.Bucket.SetConfig(c)
@@ -96,6 +94,12 @@ func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (del
 		delayRemaining = delay-elapsed
 	}
 
+	sincePrev := time.Now().Sub(entry.lastUsed)
+	if sincePrev>0 && sincePrev<time.Minute {
+		entry.avgSincePrev -= entry.avgSincePrev/10
+		entry.avgSincePrev += sincePrev/10
+	}
+
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
 	entry.avgWait += delayRemaining /10
@@ -123,7 +127,7 @@ func (b *UserAgent) truncate(truncatedSize int) {
 		newHash[purged[i].Hash()] = purged[i].(EntryUserAgent)
 	}
 
-	// TODO this will overwrite recently added entries
+	// Note: this will overwrite recently added entries
 	b.hash = newHash
 }
 
@@ -139,10 +143,11 @@ func (b *UserAgent) ticker() {
 }
 
 type EntryUserAgent struct {
-	userAgent string
-	lastUsed time.Time
-	avgWait time.Duration
-	limiter *rate.Limiter
+	userAgent    string
+	lastUsed     time.Time
+	avgWait      time.Duration
+	avgSincePrev time.Duration
+	limiter      *rate.Limiter
 }
 
 func (e EntryUserAgent) Hash() string {
@@ -157,6 +162,10 @@ func (e EntryUserAgent) LastUsed() time.Time {
 
 func (e EntryUserAgent) AvgWait() time.Duration {
 	return e.avgWait
+}
+
+func (e EntryUserAgent) AvgSincePrev() time.Duration {
+	return e.avgSincePrev
 }
 
 func (e EntryUserAgent) String() string {

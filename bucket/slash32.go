@@ -42,9 +42,7 @@ func (b *Slash32) SetConfig(c config.Config) {
 		b.rate = c.Slash16CPUs
 	}
 	b.trustedProxiesMap = c.TrustedProxiesMap
-	for _, e := range b.hash {
-		e.limiter.SetLimit(rate.Limit(b.rate))
-	}
+	b.truncate(0)
 	b.Unlock()
 
 	b.Bucket.SetConfig(c)
@@ -126,6 +124,12 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay
 		delayRemaining = delay-elapsed
 	}
 
+	sincePrev := time.Now().Sub(entry.lastUsed)
+	if sincePrev>0 && sincePrev<time.Minute {
+		entry.avgSincePrev -= entry.avgSincePrev / 10
+		entry.avgSincePrev += sincePrev / 10
+	}
+
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
 	entry.avgWait += delayRemaining / 10
@@ -153,7 +157,7 @@ func (b *Slash32) truncate(truncatedSize int) {
 		newHash[purged[i].Hash()] = purged[i].(EntrySlash32)
 	}
 
-	// TODO this will overwrite recently added entries
+	// Note: this will overwrite recently added entries
 	b.hash = newHash
 }
 
@@ -169,10 +173,11 @@ func (b *Slash32) ticker() {
 }
 
 type EntrySlash32 struct {
-	netmask string
-	lastUsed time.Time
-	avgWait time.Duration
-	limiter *rate.Limiter
+	netmask      string
+	lastUsed     time.Time
+	avgWait      time.Duration
+	avgSincePrev time.Duration
+	limiter      *rate.Limiter
 }
 
 func (e EntrySlash32) Hash() string {
@@ -187,6 +192,10 @@ func (e EntrySlash32) LastUsed() time.Time {
 
 func (e EntrySlash32) AvgWait() time.Duration {
 	return e.avgWait
+}
+
+func (e EntrySlash32) AvgSincePrev() time.Duration {
+	return e.avgSincePrev
 }
 
 func (e EntrySlash32) String() string {

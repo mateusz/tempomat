@@ -22,10 +22,10 @@ type Config struct {
 	Slash24Share      float64         `json:"slash24Share"`
 	Slash16Share      float64         `json:"slash16Share"`
 	UserAgentShare    float64         `json:"userAgentShare"`
-	Slash32CPUs       float64         `json:"slash32CPUs"`
-	Slash24CPUs       float64         `json:"slash24CPUs"`
-	Slash16CPUs       float64         `json:"slash16CPUs"`
-	UserAgentCPUs     float64         `json:"userAgentCPUs"`
+	Slash32CPUs       float64         `json:"-"`
+	Slash24CPUs       float64         `json:"-"`
+	Slash16CPUs       float64         `json:"-"`
+	UserAgentCPUs     float64         `json:"-"`
 	HashMaxLen        int             `json:"hashMaxLen"`
 	GraphiteURL       *url.URL        `json:"-"`
 	TrustedProxiesMap map[string]bool `json:"-"`
@@ -111,6 +111,8 @@ func (conf *Config) Print(log *log.Logger) {
 	log.Printf("Slash24 max CPU share:            %d%%", int(conf.Slash24Share *100.0))
 	log.Printf("Slash16 max CPU share:            %d%%", int(conf.Slash16Share *100.0))
 	log.Printf("UserAgent max CPU share:          %d%%", int(conf.UserAgentShare *100.0))
+	log.Print("")
+	log.Print("COMPUTED")
 	log.Printf("Slash32 max CPU absolute usage:   %.2fcpus", conf.Slash32CPUs)
 	log.Printf("Slash24 max CPU absolute usage:   %.2fcpus", conf.Slash24CPUs)
 	log.Printf("Slash16 max CPU absolute usage:   %.2fcpus", conf.Slash16CPUs)

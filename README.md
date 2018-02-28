@@ -51,6 +51,18 @@ The user performs a request that takes 2 seconds to serve - 2 CPU-seconds are su
 
 The class' credit is restored continuously at 0.5 CPU-second per second. This ensures that the user consumes no more than 50% of the CPU, after they have extinguished their initial allowance.
 
+### Another example
+
+Say we want to permit at most 1 CPU-second per second server usage per IP. User starts making requests that take 1 second to process:
+
+|Parallelism|Desired CPU-s/s|Non-throttled RPS|Throttled avg wait per req|Throttled average RPS|
+|---|---|---|---|---|
+|1|1|1|0s|1|
+|2|2|2|1s|1|
+|3|3|3|2s|1|
+
+Note other IPs are throttled individually.
+
 ### Classification
 
 We are not limited to looking at IP only when classifying requests. We can define any amount of heuristics and see what works best:
@@ -65,45 +77,32 @@ We are not limited to looking at IP only when classifying requests. We can defin
 
 * fingerprinting - for maximum coolness, it could be possible to classify users by looking at properties beyond HTTP request, such as IP header flags.
 
-### "Can't read the future" problem
+### Problem: can't read the future
 
 It's unclear *how much* a user should be throttled because it's impossible to tell how much credit will the next request consume beforehand. Is it a static file request? 0.002 CPU-seconds may be consumed, so the theoretical throttling period should be very short. Is it a heavy listing request? 10.0 CPU-seconds may be consumed, and the user should be limited accordingly.
 
-The actual throttling algorithm will have to be different from the leaky bucket implementation.
+Current solution to this is "cooperative throttling": don't block processing, but do delay the response after it has been produced by the server. This will cause "friendly" clients to back off ("holding the caller"). Malicious bots can still bring down the server by simply starting large amounts of requests in parallel.
 
-### "Server overloaded" problem
+### Problem: computing accurate CPU-seconds
 
 Additionally, an allowance needs to be made to estimate the CPU time consumed by a single request under >100% server load.
 
-For now, I'm assuming we can divide the wall time by the 1-minute load average, divided by the number of processors. This might give a good enough estimate of the required processing time.
+Currently I'm ignoring this problem, and assuming if the request took 1s to prodce, then it took 1 CPU-s, regardless of whether it was sleeping, busy on I/O, or the actual server load.
 
-## Data gatherer
-
-This repo currently contains a prototype data gatherer, which classifies user requests into buckets and provides logging facilities so I can see if the actual rate limiter would help.
-
-It's supposed to be used in production to check against real-life outages. But it's not ready for that yet :-)
-
-Other features:
-
-* live reload of certain configs through SIGHUP
-* `doctor` tool for introspecting the hash tables
-* allows setup of trusted proxies, which reads IP address from X-Forwarded-For from these upstream.
-
-### Usage
+## Usage
 
 Create config file in `/etc/tempomat.json`:
 
 ```json
 {
 	"debug": false,
-	"delayThreshold": 0.1,
+	"delayThresholdSec": 0.1,
 	"backend": "http://localhost:80",
 	"listenPort": 8888,
-	"statsFile": "tempomat-stats.log",
-	"syslogStats": true,
 	"graphite": "localhost:2003",
 	"graphitePrefix": "some.place.prepend.{hostname}",
 	"trustedProxies": "127.0.0.1",
+	"cpuCount": 4.0,
 	"slash32Share": 0.1,
 	"slash24Share": 0.25,
 	"slash16Share": 0.5,
@@ -115,28 +114,22 @@ Create config file in `/etc/tempomat.json`:
 Run server:
 
 ```
-go build github.com/mateusz/tempomat
-./tempomat
+go install github.com/mateusz/tempomat
+bin/tempomat
 ```
 
-Connect the doctor to `Slash32` bucket:
+Connect the doctor:
 
 ```
-go build github.com/mateusz/tempomat/doctor
-./doctor --bucket=Slash32
-# Other buckets: Slash24, Slash16, UserAgent
-# Preferred way is to watch:
-watch -n 1 ./doctor --bucket=UserAgent
+go install github.com/mateusz/tempomat/doctor
+bin/doctor
+# Or watch:
+watch -n 1 bin/doctor
 ```
 
+Live-reload configuration without stopping:
 
-
-
-
-
-
-
-
-
-
-
+```
+ps # get the tempomat proc id
+kill -SIGHUP 12345
+```

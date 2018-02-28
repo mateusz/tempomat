@@ -20,10 +20,11 @@ type DumpArgs struct {
 }
 
 type DumpEntry struct {
-	Hash   string
-	Title  string
+	Hash     string
+	Title    string
 	LastUsed time.Time
-	AvgWait time.Duration
+	AvgWait  time.Duration
+	AvgSincePrev   time.Duration
 }
 
 type DumpList []DumpEntry
@@ -51,6 +52,7 @@ func repack(b bucket.Bucketable) DumpList {
 			Title:  e[i].Title(),
 			LastUsed: e[i].LastUsed(),
 			AvgWait: e[i].AvgWait(),
+			AvgSincePrev: e[i].AvgSincePrev(),
 		}
 	}
 	return l

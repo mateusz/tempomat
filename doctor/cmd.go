@@ -61,7 +61,7 @@ func main() {
 
 	// Headers
 	for _, b := range bucketNames {
-		fmt.Printf("|%s\t\t\t", b)
+		fmt.Printf("|%s\t\t\t\t", b)
 	}
 	fmt.Print("\n")
 	for i:=0; ; i++ {
@@ -69,7 +69,7 @@ func main() {
 		for _, d := range dumps {
 			if i<len(d) {
 				has = true
-				fmt.Printf("|%.2f\t%.0f\t%s\t", d[i].AvgWait.Seconds(), time.Now().Sub(d[i].LastUsed).Seconds(), d[i].Title)
+				fmt.Printf("|%.2f\t%.2f\t%.0f\t%s\t", d[i].AvgWait.Seconds(), 1.0/d[i].AvgSincePrev.Seconds(), time.Now().Sub(d[i].LastUsed).Seconds(), d[i].Title)
 			}
 		}
 		fmt.Print("\n")

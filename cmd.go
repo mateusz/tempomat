@@ -21,10 +21,6 @@ import (
 	"sync"
 )
 
-// TODO
-// * test for lockup: set cpuCount to 0.1 (very low), wait until a large delay shows up - then no request
-// * will get responded to... actually it's changing the limit - seems to blow the buckets up :-)
-
 var conf config.Config
 var confMutex sync.RWMutex
 
@@ -82,7 +78,7 @@ func statsLogger() {
 		for _, b := range buckets {
 			for _, e := range b.Entries() {
 				if e.AvgWait() > b.DelayThreshold() {
-					stdoutLog.Printf("%s,'%s',%.2f", b, e.Title(), e.AvgWait().Seconds())
+					stdoutLog.Printf("%s,'%s',%.2f,%.2f", b, e.Title(), e.AvgWait().Seconds(), e.AvgSincePrev().Seconds())
 				}
 			}
 			sendMetric(b.String(), fmt.Sprintf("%d", CountOverThreshold(b)))
