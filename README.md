@@ -89,6 +89,22 @@ Additionally, an allowance needs to be made to estimate the CPU time consumed by
 
 Currently I'm ignoring this problem, and assuming if the request took 1s to prodce, then it took 1 CPU-s, regardless of whether it was sleeping, busy on I/O, or the actual server load.
 
+This actually seems to work out - see the example below.
+
+### Yet another example under load
+
+Let's asssume we have 1 CPU available. Let's further assume users are making requests that under normal condition take 1s each.
+
+User #1 makes 2 concurrent requests. User #2 (with different IP) makes 1 request. Since the total amount of requests is 3, with competitive multitasking these will take 3s each (3 processes each taking 1s, on 1 CPU).
+
+In such situation, user #1 gets 66% of the CPU (2 reqs / 3s) and user #2 gets 33% of the CPU (1 req / 3s). This is unfair: user #2 gets delayed out of proportion.
+
+What happens when we intoduce tempomat limited to 1s/s/IP? User #1 does 3s of processing on each request under load, meaning they get throttled down to 2 reqs / 6s. This is 33% of server resources. There is now 33% CPU free, which speeds up all requests. All requests now take 2s, expect that user #1 requests are still throttled by 3s each. After re-throttling, user #1 now has 2 req / 4s and user #2 1 req / 2s.
+
+This means the CPU is now divided evenly among the IPs, as opposed to being evenly divided among competing requests: average response times for both users are now 2s, whereas beforehand it was 1.5s for user #1 and 3s for user #2.
+
+Experimental trial confirms this: on a 100% loaded machine, without throttling, user #1 achieved 2x the rps of the user #2. After throttling the rps equalised.
+
 ## Usage
 
 Create config file in `/etc/tempomat.json`:
