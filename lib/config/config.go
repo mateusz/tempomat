@@ -35,7 +35,7 @@ func NewConfig() (Config, error) {
 
 	conf := Config{
 		Debug:              false,
-		DelayThresholdSec:  10,
+		DelayThresholdSec:  3,
 		Backend:            "http://localhost:80",
 		ListenPort:         8888,
 		Graphite:           "",
@@ -66,10 +66,10 @@ func NewConfig() (Config, error) {
 	}
 
 	// Defaults
-	conf.Slash32CPUs = 0.5 * cpuCount
-	conf.Slash24CPUs = 0.5 * cpuCount
-	conf.Slash16CPUs = 0.5 * cpuCount
-	conf.UserAgentCPUs = 0.5 * cpuCount
+	conf.Slash32CPUs = 1.0 * cpuCount
+	conf.Slash24CPUs = 1.0 * cpuCount
+	conf.Slash16CPUs = 1.0 * cpuCount
+	conf.UserAgentCPUs = 1.0 * cpuCount
 
 	if conf.Slash32Share !=0 {
 		conf.Slash32CPUs = conf.Slash32Share * cpuCount
