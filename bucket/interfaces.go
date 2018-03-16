@@ -16,6 +16,7 @@ type Entry interface {
 	LastUsed() time.Time
 	AvgWait() time.Duration
 	AvgSincePrev() time.Duration
+	AvgCpuSecs() float64
 	Title() string
 }
 

@@ -25,6 +25,7 @@ type DumpEntry struct {
 	LastUsed time.Time
 	AvgWait  time.Duration
 	AvgSincePrev   time.Duration
+	AvgCpuSecs float64
 }
 
 type DumpList []DumpEntry
@@ -33,6 +34,12 @@ type AvgWaitSortDumpList []DumpEntry
 func (l AvgWaitSortDumpList) Len() int           { return len(l) }
 func (l AvgWaitSortDumpList) Less(i, j int) bool { return l[i].AvgWait>l[j].AvgWait }
 func (l AvgWaitSortDumpList) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+
+type TitleSortDumpList []DumpEntry
+
+func (l TitleSortDumpList) Len() int           { return len(l) }
+func (l TitleSortDumpList) Less(i, j int) bool { return l[i].Title>l[j].Title }
+func (l TitleSortDumpList) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
 
 func (a *TempomatAPI) Dump(args *DumpArgs, reply *DumpList) error {
 	for _, b := range a.buckets {
@@ -53,6 +60,7 @@ func repack(b bucket.Bucketable) DumpList {
 			LastUsed: e[i].LastUsed(),
 			AvgWait: e[i].AvgWait(),
 			AvgSincePrev: e[i].AvgSincePrev(),
+			AvgCpuSecs: e[i].AvgCpuSecs(),
 		}
 	}
 	return l

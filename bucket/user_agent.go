@@ -104,6 +104,11 @@ func (b *UserAgent) ReserveN(r *http.Request, start time.Time, qty float64) (del
 	entry.avgWait -= entry.avgWait/10
 	entry.avgWait += delayRemaining /10
 
+	cpuSecsPerSec := qty/float64(entry.avgSincePrev.Seconds())
+	if cpuSecsPerSec<100.0 {
+		entry.avgCpuSecs -= entry.avgCpuSecs / 10
+		entry.avgCpuSecs += cpuSecsPerSec / 10
+	}
 	b.hash[key] = entry
 
 	return
@@ -145,6 +150,7 @@ type EntryUserAgent struct {
 	lastUsed     time.Time
 	avgWait      time.Duration
 	avgSincePrev time.Duration
+	avgCpuSecs   float64
 	limiter      *rate.Limiter
 }
 
@@ -164,6 +170,10 @@ func (e EntryUserAgent) AvgWait() time.Duration {
 
 func (e EntryUserAgent) AvgSincePrev() time.Duration {
 	return e.avgSincePrev
+}
+
+func (e EntryUserAgent) AvgCpuSecs() float64 {
+	return e.avgCpuSecs
 }
 
 func (e EntryUserAgent) String() string {

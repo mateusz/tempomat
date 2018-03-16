@@ -106,7 +106,7 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay
 	if _, ok := b.hash[key]; ok {
 		entry = b.hash[key];
 	} else {
-		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 120 * 1000)
+		entry.limiter = rate.NewLimiter(rate.Limit(b.rate * 1000), 30 * 1000)
 	}
 
 	rsv := entry.limiter.ReserveN(start, int(qty * 1000))
@@ -133,6 +133,12 @@ func (b *Slash32) ReserveN(r *http.Request, start time.Time, qty float64) (delay
 	entry.lastUsed = time.Now()
 	entry.avgWait -= entry.avgWait/10
 	entry.avgWait += delayRemaining / 10
+
+	cpuSecsPerSec := qty/float64(entry.avgSincePrev.Seconds())
+	if cpuSecsPerSec<100.0 {
+		entry.avgCpuSecs -= entry.avgCpuSecs / 10
+		entry.avgCpuSecs += cpuSecsPerSec / 10
+	}
 
 	b.hash[key] = entry
 
@@ -175,6 +181,7 @@ type EntrySlash32 struct {
 	lastUsed     time.Time
 	avgWait      time.Duration
 	avgSincePrev time.Duration
+	avgCpuSecs   float64
 	limiter      *rate.Limiter
 }
 
@@ -194,6 +201,10 @@ func (e EntrySlash32) AvgWait() time.Duration {
 
 func (e EntrySlash32) AvgSincePrev() time.Duration {
 	return e.avgSincePrev
+}
+
+func (e EntrySlash32) AvgCpuSecs() float64 {
+	return e.avgCpuSecs
 }
 
 func (e EntrySlash32) String() string {
