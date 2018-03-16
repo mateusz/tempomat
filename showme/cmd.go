@@ -10,18 +10,17 @@ import (
 	"github.com/hajimehoshi/ebiten/ebitenutil"
 	"fmt"
 	"time"
-	"sync"
 	"github.com/lucasb-eyer/go-colorful"
 	"golang.org/x/image/draw"
 )
 
 const (
-	tickPeriod = 1000 * time.Millisecond
+	tickPeriod = 100 * time.Millisecond
 )
 
 var (
-	bufMutex sync.RWMutex
-	buf *image.RGBA
+	bufPipe chan *image.RGBA
+	backBuf *image.RGBA
 	palette []colorful.Color
 	palPointer int
 	palMap map[string]colorful.Color
@@ -31,9 +30,10 @@ var (
 )
 
 func main() {
-	scrWidth = 1000
+	scrWidth = 1500
 	scrHeight = 500
-	buf = image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
+	bufPipe = make(chan *image.RGBA)
+	backBuf = image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
 
 	var err error
 	palette, err = colorful.SoftPaletteEx(10, colorful.SoftPaletteSettings{isNice, 50, true})
@@ -51,11 +51,18 @@ func main() {
 	}
 
 	shutdown := make(chan bool)
-	go func(shutdown chan bool) {
+	go func(bufPipe chan *image.RGBA, shutdown chan bool) {
+		buf := image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
 		tick := time.NewTicker(tickPeriod)
 		defer tick.Stop()
 		for {
-			getData()
+			data := getData()
+
+			if data!=nil {
+				paint(data, buf)
+				bufCopy := *buf
+				bufPipe <- &bufCopy
+			}
 
 			select {
 			case <-tick.C:
@@ -64,7 +71,7 @@ func main() {
 				return
 			}
 		}
-	}(shutdown)
+	}(bufPipe, shutdown)
 
 	if err := ebiten.Run(update, scrWidth, scrHeight, 1.0, "Tempomat Show"); err != nil {
 		log.Fatal(err)
@@ -75,10 +82,10 @@ func main() {
 
 func isNice(l, a, b float64) bool {
 	h, c, L := colorful.LabToHcl(l, a, b)
-	return 100.0 < h && h < 200.0 && 0.4 < c && c < 0.8 && 0.4 < L && L < 0.8
+	return 150.0 < h && h < 250.0 && 0.2 < c && c < 0.8 && 0.0 < L && L < 0.8
 }
 
-func getData() {
+func getData() *api.DumpList {
 	slash32 := api.DumpList{}
 	args := api.DumpArgs{
 		BucketName: "Slash32",
@@ -86,13 +93,16 @@ func getData() {
 	err := tempomatClient.Call("TempomatAPI.Dump", &args, &slash32)
 	if err != nil {
 		log.Printf("Call error: %s", err)
-		return
+		return nil
 	}
 
 	sort.Sort(api.TitleSortDumpList(slash32))
+	return &slash32
+}
 
+func paint(slash32 *api.DumpList, buf *image.RGBA) {
 	total := 0.0
-	for _, e := range slash32 {
+	for _, e := range *slash32 {
 		if time.Since(e.LastUsed)>10*time.Second {
 			continue
 		}
@@ -111,10 +121,9 @@ func getData() {
 		}
 	}
 
-	bufMutex.Lock()
-	moveLeft()
+	moveLeft(buf)
 	curY := 0
-	for _, e := range slash32 {
+	for _, e := range *slash32 {
 		if time.Since(e.LastUsed)>10*time.Second {
 			continue
 		}
@@ -126,10 +135,9 @@ func getData() {
 		}
 		curY = nextY
 	}
-	bufMutex.Unlock()
 }
 
-func moveLeft() {
+func moveLeft(buf *image.RGBA) {
 	b := buf.Bounds()
 	t := image.Pt(1, 0)
 	draw.Draw(buf, b, buf, b.Min.Add(t), draw.Src)
@@ -140,9 +148,13 @@ func update(screen *ebiten.Image) error {
 		return nil
 	}
 
-	bufMutex.RLock()
-	screen.ReplacePixels(buf.Pix)
-	bufMutex.RUnlock()
+	select {
+	case buf := <-bufPipe:
+		backBuf = buf
+	default:
+	}
+
+	screen.ReplacePixels(backBuf.Pix)
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("FPS: %f", ebiten.CurrentFPS()))
 	return nil
 }
