@@ -1,17 +1,20 @@
 package main
 
 import (
-	"github.com/hajimehoshi/ebiten"
+	"image"
+	"image/color"
 	"log"
 	"net/rpc"
-	"github.com/mateusz/tempomat/api"
 	"sort"
-	"image"
-	"github.com/hajimehoshi/ebiten/ebitenutil"
-	"fmt"
 	"time"
+
+	"github.com/golang/freetype"
+	"github.com/golang/freetype/truetype"
+	"github.com/hajimehoshi/ebiten"
 	"github.com/lucasb-eyer/go-colorful"
+	"github.com/mateusz/tempomat/api"
 	"golang.org/x/image/draw"
+	"golang.org/x/image/font/gofont/gosmallcaps"
 )
 
 const (
@@ -19,25 +22,37 @@ const (
 )
 
 var (
-	bufPipe chan *image.RGBA
-	backBuf *image.RGBA
-	palette []colorful.Color
-	palPointer int
-	palMap map[string]colorful.Color
-	scrWidth int
-	scrHeight int
+	imgPipe        chan *ebiten.Image
+	backImg        *ebiten.Image
+	palette        []colorful.Color
+	palPointer     int
+	palMap         map[string]colorful.Color
+	scrWidth       int
+	scrHeight      int
 	tempomatClient *rpc.Client
+	labels         map[string]time.Time
+	fontFace       *truetype.Font
 )
 
 func main() {
-	scrWidth = 1500
+	scrWidth = 1350
 	scrHeight = 500
-	bufPipe = make(chan *image.RGBA)
-	backBuf = image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
+	imgPipe = make(chan *ebiten.Image)
+	labels = make(map[string]time.Time, 0)
 
 	var err error
+	backImg, err = ebiten.NewImage(scrWidth, scrHeight, ebiten.FilterNearest)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	fontFace, err = truetype.Parse(gosmallcaps.TTF)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
 	palette, err = colorful.SoftPaletteEx(10, colorful.SoftPaletteSettings{isNice, 50, true})
-	if err!=nil {
+	if err != nil {
 		log.Fatalf("%s", err)
 	}
 
@@ -51,17 +66,43 @@ func main() {
 	}
 
 	shutdown := make(chan bool)
-	go func(bufPipe chan *image.RGBA, shutdown chan bool) {
+	go func(imgPipe chan *ebiten.Image, shutdown chan bool) {
 		buf := image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
+		labelBuf := image.NewRGBA(image.Rect(0, 0, scrWidth+250, scrHeight))
+
+		c := freetype.NewContext()
+		c.SetDPI(72)
+		c.SetFont(fontFace)
+		c.SetFontSize(8)
+		c.SetClip(labelBuf.Bounds())
+		c.SetDst(labelBuf)
+		c.SetSrc(image.NewUniform(color.White))
+
 		tick := time.NewTicker(tickPeriod)
 		defer tick.Stop()
 		for {
 			data := getData()
 
-			if data!=nil {
-				paint(data, buf)
-				bufCopy := *buf
-				bufPipe <- &bufCopy
+			if data != nil {
+				moveLeft(buf)
+				moveLeft(labelBuf)
+				paint(data, c, buf, labelBuf)
+
+				img, err := ebiten.NewImageFromImage(buf, ebiten.FilterNearest)
+				if err != nil {
+					log.Fatalf("%s", err)
+				}
+				labelImg, err := ebiten.NewImageFromImage(labelBuf, ebiten.FilterNearest)
+				if err != nil {
+					log.Fatalf("%s", err)
+				}
+				mask := image.Rect(0, 0, scrWidth-1, scrHeight-1)
+				opts := &ebiten.DrawImageOptions{
+					SourceRect: &mask,
+				}
+				img.DrawImage(labelImg, opts)
+
+				imgPipe <- img
 			}
 
 			select {
@@ -71,7 +112,7 @@ func main() {
 				return
 			}
 		}
-	}(bufPipe, shutdown)
+	}(imgPipe, shutdown)
 
 	if err := ebiten.Run(update, scrWidth, scrHeight, 1.0, "Tempomat Show"); err != nil {
 		log.Fatal(err)
@@ -100,10 +141,10 @@ func getData() *api.DumpList {
 	return &slash32
 }
 
-func paint(slash32 *api.DumpList, buf *image.RGBA) {
+func paint(slash32 *api.DumpList, fc *freetype.Context, buf, labelBuf *image.RGBA) {
 	total := 0.0
 	for _, e := range *slash32 {
-		if time.Since(e.LastUsed)>10*time.Second {
+		if time.Since(e.LastUsed) > 10*time.Second {
 			continue
 		}
 
@@ -114,25 +155,31 @@ func paint(slash32 *api.DumpList, buf *image.RGBA) {
 			palMap[e.Title] = palette[palPointer]
 
 			palPointer++
-			if palPointer>=len(palette) {
+			if palPointer >= len(palette) {
 				// Rotate palette.
 				palPointer = 0
 			}
 		}
 	}
 
-	moveLeft(buf)
 	curY := 0
 	for _, e := range *slash32 {
-		if time.Since(e.LastUsed)>10*time.Second {
+		if time.Since(e.LastUsed) > 10*time.Second {
 			continue
 		}
 
-		length := int((e.AvgCpuSecs/total)*float64(scrHeight))
-		nextY := curY+length
-		for y := curY; y<nextY; y++ {
+		length := int((e.AvgCpuSecs / total) * float64(scrHeight))
+		nextY := curY + length
+		for y := curY; y < nextY; y++ {
 			buf.Set(scrWidth-1, y, palMap[e.Title])
 		}
+
+		if lastWritten, ok := labels[e.Title]; !ok || time.Since(lastWritten).Seconds() > 10 {
+			pt := freetype.Pt(scrWidth-1, curY+8)
+			fc.DrawString(e.Title, pt)
+			labels[e.Title] = time.Now()
+		}
+
 		curY = nextY
 	}
 }
@@ -149,12 +196,11 @@ func update(screen *ebiten.Image) error {
 	}
 
 	select {
-	case buf := <-bufPipe:
-		backBuf = buf
+	case img := <-imgPipe:
+		backImg = img
 	default:
 	}
 
-	screen.ReplacePixels(backBuf.Pix)
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("FPS: %f", ebiten.CurrentFPS()))
+	screen.DrawImage(backImg, nil)
 	return nil
 }
