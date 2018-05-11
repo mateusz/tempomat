@@ -14,11 +14,12 @@ import (
 
 	"net/rpc"
 
+	"log"
+	"sync"
+
 	"github.com/mateusz/tempomat/api"
 	"github.com/mateusz/tempomat/bucket"
 	"github.com/mateusz/tempomat/lib/config"
-	"log"
-	"sync"
 )
 
 var conf config.Config
@@ -37,7 +38,7 @@ func init() {
 
 	var err error
 	conf, err = config.NewConfig()
-	if err!=nil {
+	if err != nil {
 		stderrLog.Printf("%s\n", err)
 		os.Exit(1)
 	}
@@ -88,7 +89,7 @@ func statsLogger() {
 
 func sendMetric(metric string, value string) {
 	confMutex.RLock()
-	if conf.Graphite=="" {
+	if conf.Graphite == "" {
 		confMutex.RUnlock()
 		return
 	}
@@ -96,7 +97,6 @@ func sendMetric(metric string, value string) {
 	host := conf.GraphiteURL.Host
 	prefix := conf.GraphitePrefix
 	confMutex.RUnlock()
-
 
 	dialer, err := net.Dial("tcp", host)
 	if err != nil {
@@ -138,12 +138,12 @@ func middleware(proxy http.Handler) http.Handler {
 			if !ok {
 				header = 503
 			}
-			if (bucketDelay>maxDelay) {
+			if bucketDelay > maxDelay {
 				maxDelay = bucketDelay
 			}
 		}
 
-		if header!=200 {
+		if header != 200 {
 			w.WriteHeader(header)
 		}
 		holdCaller(start, maxDelay)
@@ -152,7 +152,7 @@ func middleware(proxy http.Handler) http.Handler {
 
 func holdCaller(start time.Time, delay time.Duration) {
 	elapsed := time.Now().Sub(start)
-	if elapsed>=delay {
+	if elapsed >= delay {
 		return
 	}
 
@@ -184,7 +184,7 @@ func sighupHandler() {
 		stdoutLog.Print("SIGHUP received, reloading config\n")
 
 		newConfig, err := config.NewConfig()
-		if err!=nil {
+		if err != nil {
 			stderrLog.Printf("Unale to reload config: %s\n", err)
 			return
 		}

@@ -2,28 +2,91 @@
 
 
 [[projects]]
-  name = "github.com/Sirupsen/logrus"
-  packages = ["."]
-  revision = "d682213848ed68c0a260ca37d6dd5ace8423f5ba"
-  version = "v1.0.4"
-
-[[projects]]
-  branch = "master"
   name = "github.com/StackExchange/wmi"
   packages = ["."]
-  revision = "ea383cf3ba6ec950874b8486cd72356d007c768f"
+  revision = "5d049714c4a64225c3c79a7cf7d02f7fb5b96338"
+  version = "1.0.0"
 
 [[projects]]
   name = "github.com/containous/flaeg"
-  packages = ["."]
-  revision = "4b6f66624dce34a226f080b414c4705ea8731bc5"
-  version = "v1.0.0"
+  packages = [
+    ".",
+    "parse"
+  ]
+  revision = "b4c2f060875361c070ed2bc300c5929b82f5fa2e"
+  version = "v1.1.2"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/go-gl/gl"
+  packages = ["v2.1/gl"]
+  revision = "68e2537930806bfcee1b92a0e14b4e9b8bb3a3e3"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/go-gl/glfw"
+  packages = ["v3.2/glfw"]
+  revision = "46a8d530c3268b31eeb1310f30fe42be1cae98f2"
 
 [[projects]]
   name = "github.com/go-ole/go-ole"
-  packages = [".","oleutil"]
-  revision = "0e87ea779d9deb219633b828a023b32e1244dd57"
-  version = "v1.2.0"
+  packages = [
+    ".",
+    "oleutil"
+  ]
+  revision = "a41e3c4b706f6ae8dfbff342b06e40fa4d2d0506"
+  version = "v1.2.1"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/gopherjs/gopherjs"
+  packages = [
+    "js",
+    "nosync"
+  ]
+  revision = "8dffc02ea1cb8398bb73f30424697c60fcf8d4c5"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/gopherjs/webgl"
+  packages = ["."]
+  revision = "39bd6d41eeb587730fcaa65adf71978fb10675bc"
+
+[[projects]]
+  name = "github.com/hajimehoshi/ebiten"
+  packages = [
+    ".",
+    "ebitenutil",
+    "ebitenutil/internal/assets",
+    "internal",
+    "internal/affine",
+    "internal/audiobinding",
+    "internal/clock",
+    "internal/devicescale",
+    "internal/endian",
+    "internal/graphics",
+    "internal/jni",
+    "internal/math",
+    "internal/opengl",
+    "internal/restorable",
+    "internal/sync",
+    "internal/ui",
+    "internal/web"
+  ]
+  revision = "c008084f01f9546332a7ab8d929cab3bb3383473"
+  version = "v1.6.4"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/lucasb-eyer/go-colorful"
+  packages = ["."]
+  revision = "231272389856c976b7500c4fffcc52ddf06ff4eb"
+
+[[projects]]
+  name = "github.com/mattn/go-runewidth"
+  packages = ["."]
+  revision = "9e777a8366cce605130a531d2cd6363d07ad7317"
+  version = "v0.0.2"
 
 [[projects]]
   branch = "master"
@@ -32,38 +95,59 @@
   revision = "45c278ab3607870051a2ea9040bb85fcb8557481"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/olekukonko/tablewriter"
+  packages = ["."]
+  revision = "d4647c9c7a84d847478d890b816b7d8b62b0b279"
+
+[[projects]]
   name = "github.com/shirou/gopsutil"
-  packages = ["cpu","internal/common","load"]
-  revision = "bfe3c2e8f406bf352bc8df81f98c752224867349"
-  version = "v2.17.11"
+  packages = [
+    "cpu",
+    "internal/common"
+  ]
+  revision = "c95755e4bcd7a62bb8bd33f3a597a7c7f35e2cf3"
+  version = "v2.18.04"
 
 [[projects]]
   branch = "master"
-  name = "golang.org/x/crypto"
-  packages = ["ssh/terminal"]
-  revision = "94eea52f7b742c7cbe0b03b22f0c4c8631ece122"
+  name = "golang.org/x/image"
+  packages = [
+    "draw",
+    "math/f64"
+  ]
+  revision = "f315e440302883054d0c2bd85486878cb4f8572c"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/mobile"
+  packages = ["gl"]
+  revision = "274da161099df258cb919e10e9fd0ae401e143a8"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/net"
   packages = ["context"]
-  revision = "faacc1b5e36e3ff02cbec9661c69ac63dd5a83ad"
+  revision = "f73e4c9ed3b7ebdd5f699a16a880c2b1994e50dd"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/sys"
-  packages = ["unix","windows"]
-  revision = "a0f4589a76f1f83070cb9e5613809e1d07b97c13"
+  packages = [
+    "unix",
+    "windows"
+  ]
+  revision = "7dfd1290c7917b7ba22824b9d24954ab3002fe24"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/time"
   packages = ["rate"]
-  revision = "6dc17368e09b0e8634d71cac8168d853e869a0c7"
+  revision = "fbb02b2291d28baffd63558aa44b4b56f178d650"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "9c2d6f01ec9016c5ebff2a8f9faaf21de08e51a3112707fe501536bc0f7b1d15"
+  inputs-digest = "042129ac40999c6c20fa618b7466f116a2bb67c6aa754f7d8aa602edc3abdb9d"
   solver-name = "gps-cdcl"
   solver-version = 1
