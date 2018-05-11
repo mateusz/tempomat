@@ -19,6 +19,7 @@ import (
 
 const (
 	tickPeriod = 100 * time.Millisecond
+	maxAge     = 10 * time.Second
 )
 
 var (
@@ -32,6 +33,10 @@ var (
 	tempomatClient *rpc.Client
 	labels         map[string]time.Time
 	fontFace       *truetype.Font
+	buf            *image.RGBA
+	labelBuf       *image.RGBA
+	fontCtx        *freetype.Context
+	lastTick       time.Time
 )
 
 func main() {
@@ -65,60 +70,21 @@ func main() {
 		log.Fatalf("Failed to dial server: %s", err)
 	}
 
-	shutdown := make(chan bool)
-	go func(imgPipe chan *ebiten.Image, shutdown chan bool) {
-		buf := image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
-		labelBuf := image.NewRGBA(image.Rect(0, 0, scrWidth+250, scrHeight))
+	buf = image.NewRGBA(image.Rect(0, 0, scrWidth, scrHeight))
+	labelBuf = image.NewRGBA(image.Rect(0, 0, scrWidth+250, scrHeight))
 
-		c := freetype.NewContext()
-		c.SetDPI(72)
-		c.SetFont(fontFace)
-		c.SetFontSize(8)
-		c.SetClip(labelBuf.Bounds())
-		c.SetDst(labelBuf)
-		c.SetSrc(image.NewUniform(color.White))
+	fontCtx = freetype.NewContext()
+	fontCtx.SetDPI(72)
+	fontCtx.SetFont(fontFace)
+	fontCtx.SetFontSize(10)
+	fontCtx.SetClip(labelBuf.Bounds())
+	fontCtx.SetDst(labelBuf)
+	fontCtx.SetSrc(image.NewUniform(color.White))
 
-		tick := time.NewTicker(tickPeriod)
-		defer tick.Stop()
-		for {
-			data := getData()
-
-			if data != nil {
-				moveLeft(buf)
-				moveLeft(labelBuf)
-				paint(data, c, buf, labelBuf)
-
-				img, err := ebiten.NewImageFromImage(buf, ebiten.FilterNearest)
-				if err != nil {
-					log.Fatalf("%s", err)
-				}
-				labelImg, err := ebiten.NewImageFromImage(labelBuf, ebiten.FilterNearest)
-				if err != nil {
-					log.Fatalf("%s", err)
-				}
-				mask := image.Rect(0, 0, scrWidth-1, scrHeight-1)
-				opts := &ebiten.DrawImageOptions{
-					SourceRect: &mask,
-				}
-				img.DrawImage(labelImg, opts)
-
-				imgPipe <- img
-			}
-
-			select {
-			case <-tick.C:
-				continue
-			case <-shutdown:
-				return
-			}
-		}
-	}(imgPipe, shutdown)
-
+	lastTick = time.Now()
 	if err := ebiten.Run(update, scrWidth, scrHeight, 1.0, "Tempomat Show"); err != nil {
 		log.Fatal(err)
 	}
-
-	shutdown <- true
 }
 
 func isNice(l, a, b float64) bool {
@@ -144,7 +110,7 @@ func getData() *api.DumpList {
 func paint(slash32 *api.DumpList, fc *freetype.Context, buf, labelBuf *image.RGBA) {
 	total := 0.0
 	for _, e := range *slash32 {
-		if time.Since(e.LastUsed) > 10*time.Second {
+		if time.Since(e.LastUsed) > maxAge {
 			continue
 		}
 
@@ -164,7 +130,7 @@ func paint(slash32 *api.DumpList, fc *freetype.Context, buf, labelBuf *image.RGB
 
 	curY := 0
 	for _, e := range *slash32 {
-		if time.Since(e.LastUsed) > 10*time.Second {
+		if time.Since(e.LastUsed) > maxAge {
 			continue
 		}
 
@@ -174,8 +140,8 @@ func paint(slash32 *api.DumpList, fc *freetype.Context, buf, labelBuf *image.RGB
 			buf.Set(scrWidth-1, y, palMap[e.Title])
 		}
 
-		if lastWritten, ok := labels[e.Title]; !ok || time.Since(lastWritten).Seconds() > 10 {
-			pt := freetype.Pt(scrWidth-1, curY+8)
+		if lastWritten, ok := labels[e.Title]; !ok || time.Since(lastWritten) > maxAge {
+			pt := freetype.Pt(scrWidth, curY+10)
 			fc.DrawString(e.Title, pt)
 			labels[e.Title] = time.Now()
 		}
@@ -195,10 +161,29 @@ func update(screen *ebiten.Image) error {
 		return nil
 	}
 
-	select {
-	case img := <-imgPipe:
+	var data *api.DumpList
+	if time.Since(lastTick) > tickPeriod {
+		data = getData()
+	}
+	if data != nil {
+		moveLeft(buf)
+		moveLeft(labelBuf)
+		paint(data, fontCtx, buf, labelBuf)
+		img, err := ebiten.NewImageFromImage(buf, ebiten.FilterNearest)
+		if err != nil {
+			log.Fatalf("%s", err)
+		}
+		labelImg, err := ebiten.NewImageFromImage(labelBuf, ebiten.FilterNearest)
+		if err != nil {
+			log.Fatalf("%s", err)
+		}
+		mask := image.Rect(0, 0, scrWidth-1, scrHeight-1)
+		opts := &ebiten.DrawImageOptions{
+			SourceRect: &mask,
+		}
+		img.DrawImage(labelImg, opts)
+
 		backImg = img
-	default:
 	}
 
 	screen.DrawImage(backImg, nil)
